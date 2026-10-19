@@ -127,3 +127,37 @@ button.down {
   color: var(--text-dim);
   word-break: break-all;
 }
+
+.status.bad {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.room-line {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.room-form[hidden] {
+  display: none;
+}
+
+.room-form label {
+  display: block;
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.room-form input {
+  flex: 1;
+  min-width: 0;
+  font-size: 20px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  letter-spacing: 0.1em;
+}

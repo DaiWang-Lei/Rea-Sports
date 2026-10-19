@@ -13,7 +13,7 @@
     <div class="page">
       <header>
         <h1>体感调试（手机 / Joy-Con）</h1>
-        <a href="/">返回游戏</a>
+        <a href="./">返回首页</a>
       </header>
 
       <section class="card" id="sec-connect">
@@ -30,14 +30,18 @@
                 <ol class="steps dim">
                   <li>手机和这台 Mac 连<strong>同一个 Wi-Fi</strong>。</li>
                   <li>扫码：iPhone 用相机；安卓用 Chrome 或系统浏览器的扫一扫（不要用微信扫）。</li>
-                  <li>
+                  <li id="li-cert">
                     出现「连接不是私密连接」时：iPhone 点「显示详细信息 → 访问此网站」，安卓 Chrome
                     点「高级 → 继续前往」。
                   </li>
                   <li>点「开始」；iPhone 会询问「动作与方向」，选「允许」。</li>
-                  <li>Mac 如果弹出「是否允许 node 接受传入的网络连接」，选「允许」。</li>
+                  <li id="li-firewall">
+                    Mac 如果弹出「是否允许 node 接受传入的网络连接」，选「允许」。
+                  </li>
                 </ol>
+                <div id="room-code" class="room-code"></div>
                 <div id="hub-status" class="dim"></div>
+                <div id="link-mode" class="dim small"></div>
               </div>
             </div>
           </div>

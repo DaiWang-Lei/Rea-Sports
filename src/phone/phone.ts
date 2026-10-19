@@ -12,6 +12,8 @@ import {
   phoneToBody,
   type Platform,
 } from '@/input/phone/protocol';
+import { isValidRoom } from '@/net/signal';
+import { type LinkState, type PhoneSideLink, RelayPhoneLink, RtcPhoneLink } from './links';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -45,56 +47,76 @@ const id = phoneId();
 const name = deviceName();
 
 // ---------------------------------------------------------------- 连接
-let ws: WebSocket | null = null;
-let connected = false;
+// 网址里带房间号 → WebRTC 直连（线上部署）；否则在本地开发服务器上用 WebSocket 中转
+let link: PhoneSideLink | null = null;
+let linkState: LinkState = 'connecting';
+let linkDetail = '正在连接电脑…';
 
 function setStatus(): void {
   const el = $('status');
-  if (!connected) {
-    el.textContent = '正在连接电脑…';
-    el.className = 'status warn';
+  if (linkState !== 'connected') {
+    el.textContent = linkDetail;
+    el.className = `status ${linkState === 'disconnected' ? 'bad' : 'warn'}`;
     return;
   }
   el.textContent = started
-    ? `已连接电脑 · ${hz.toFixed(0)} 次/秒${signText()}`
-    : '已连接电脑 · 点「开始」';
+    ? `${linkDetail} · ${hz.toFixed(0)} 次/秒${signText()}`
+    : `${linkDetail} · 点「开始」`;
   el.className = `status ${started && hz > 30 ? 'ok' : 'warn'}`;
 }
 
-function connect(): void {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(
-    `${proto}://${location.host}/motion?role=phone&id=${id}&name=${encodeURIComponent(name)}`
-  );
-  ws.onopen = () => {
-    connected = true;
+function onGameMessage(msg: GameToPhoneMessage): void {
+  if (msg.type === 'vibrate') {
+    if (canVibrate) navigator.vibrate(msg.pattern);
+  } else if (msg.type === 'ping') {
+    send({ type: 'pong', t: msg.t });
+  } else if (msg.type === 'info') {
+    $('info').textContent = msg.text;
+  }
+}
+
+function startLink(l: PhoneSideLink): void {
+  link = l;
+  l.start({
+    onMessage: onGameMessage,
+    onState: (state, detail) => {
+      linkState = state;
+      linkDetail = detail;
+      setStatus();
+      if (state === 'connected') sendMeta();
+    },
+  });
+}
+
+/** 本地开发服务器才有 /api/lan */
+async function isDevServer(): Promise<boolean> {
+  if (!import.meta.env.DEV) return false;
+  try {
+    const res = await fetch(`${import.meta.env.BASE_URL}api/lan`);
+    return res.ok && (res.headers.get('content-type') ?? '').includes('json');
+  } catch {
+    return false;
+  }
+}
+
+async function connect(): Promise<void> {
+  const room = new URLSearchParams(location.search).get('room')?.toLowerCase() ?? null;
+  if (isValidRoom(room)) {
+    $('room-line').textContent = `房间号 ${room}`;
+    startLink(new RtcPhoneLink(room, id, name));
+  } else if (await isDevServer()) {
+    startLink(new RelayPhoneLink(id, name));
+  } else {
+    // 线上打开但没带房间号：让用户输入电脑屏幕上显示的房间号
+    $('room-form').hidden = false;
+    linkState = 'disconnected';
+    linkDetail = '请输入电脑上显示的房间号';
     setStatus();
-    sendMeta();
-  };
-  ws.onmessage = (e) => {
-    let msg: GameToPhoneMessage;
-    try {
-      msg = JSON.parse(e.data as string);
-    } catch {
-      return;
-    }
-    if (msg.type === 'vibrate') {
-      if (canVibrate) navigator.vibrate(msg.pattern);
-    } else if (msg.type === 'ping') {
-      send({ type: 'pong', t: msg.t });
-    } else if (msg.type === 'info') {
-      $('info').textContent = msg.text;
-    }
-  };
-  ws.onclose = () => {
-    connected = false;
-    setStatus();
-    setTimeout(connect, 1000);
-  };
+  }
 }
 
 function send(msg: PhoneMessage): void {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  link?.send(msg);
 }
 
 function sendMeta(): void {
@@ -112,7 +134,10 @@ function sendMeta(): void {
 // ---------------------------------------------------------------- 体感
 const detector = new AccelSignDetector();
 let started = false;
+/** 有没有陀螺仪：开始前未知（按有算）；开始后收到有效数据就算有，2.5 秒内一直没有才判定为没有 */
 let hasGyro = true;
+let rawEvents = 0;
+let validSamples = 0;
 let beta: number | null = null;
 let gamma: number | null = null;
 let seq = 0;
@@ -133,17 +158,17 @@ function onOrientation(e: DeviceOrientationEvent): void {
 }
 
 function onMotion(e: DeviceMotionEvent): void {
+  rawEvents++;
   const rr = e.rotationRate;
   const a = e.accelerationIncludingGravity;
-  if (!rr || rr.alpha === null || rr.beta === null || rr.gamma === null) {
-    if (hasGyro) {
-      hasGyro = false;
-      $('setup-msg').textContent = '这台手机的浏览器没有提供陀螺仪数据，无法当球拍使用。';
-      sendMeta();
-    }
-    return;
-  }
+  // 有的浏览器在没有传感器或刚开始监听时会发一次全空的事件：跳过，不据此下结论
+  if (!rr || rr.alpha === null || rr.beta === null || rr.gamma === null) return;
   if (!a || a.x === null || a.y === null || a.z === null) return;
+  validSamples++;
+  if (!hasGyro) {
+    hasGyro = true;
+    $('setup-msg').textContent = '';
+  }
   const acc = { x: a.x, y: a.y, z: a.z };
   const rate = { alpha: rr.alpha, beta: rr.beta, gamma: rr.gamma };
   detector.add(acc, beta, gamma, Math.hypot(rate.alpha, rate.beta, rate.gamma));
@@ -206,11 +231,17 @@ async function start(): Promise<void> {
   void keepAwake();
   setStatus();
   window.setTimeout(() => {
-    if (count === 0 && hz === 0) {
+    if (validSamples > 0) return;
+    if (rawEvents > 0) {
+      hasGyro = false;
+      sendMeta();
+      msg.textContent =
+        '这台手机的浏览器没有提供陀螺仪数据，无法当球拍使用。可以换 Chrome / Safari 试试。';
+    } else {
       msg.textContent =
         '没有收到体感数据：请确认浏览器允许了「动作与方向」，或换 Chrome / Safari 试试。';
-      $('setup').hidden = false;
     }
+    $('setup').hidden = false;
   }, 2500);
 }
 
@@ -255,6 +286,11 @@ function updateDebug(): void {
 }
 
 $('btn-start').addEventListener('click', () => void start());
+$('room-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = ($<HTMLInputElement>('room-input').value || '').trim().toLowerCase();
+  if (isValidRoom(v)) location.search = `?room=${v}`;
+});
 for (const el of document.querySelectorAll<HTMLElement>('[data-btn]')) bindButton(el);
 updateDebug();
-connect();
+void connect();

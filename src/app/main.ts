@@ -80,7 +80,7 @@ function showMenu(): void {
       <h1>体感乒乓</h1>
       <p class="dim">手感对标 Wii Sports Resort 乒乓球的净室重做 · 开发中</p>
       <div class="menu-items">
-        <a class="menu-item" href="/imu-debug.html">
+        <a class="menu-item" href="imu-debug.html">
           <strong>体感调试（手机 / Joy-Con）</strong>
           <span>M0：扫码连手机或配对 Joy-Con、看数据、跑检查清单、录挥拍样本</span>
         </a>

@@ -19,7 +19,23 @@
       <header>
         <h1>体感乒乓 · 手机控制器</h1>
         <div id="status" class="status">正在连接电脑…</div>
+        <div id="room-line" class="room-line"></div>
       </header>
+
+      <form id="room-form" class="room-form" hidden>
+        <label for="room-input">房间号（电脑调试页上显示的那串字母数字）</label>
+        <div class="row">
+          <input
+            id="room-input"
+            inputmode="latin"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            maxlength="16"
+          />
+          <button type="submit" class="primary">连接</button>
+        </div>
+      </form>
 
       <div class="safety">
         ⚠️ 握紧手机，最好挂上手机绳；先小幅度轻挥，确认手感后再加力；注意周围的人和易碎物品。

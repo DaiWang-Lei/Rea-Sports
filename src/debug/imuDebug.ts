@@ -26,7 +26,15 @@ import {
 } from '@/input/HidManager';
 import { DEFAULT_CALIBRATION } from '@/input/joycon/calibration';
 import { type DriverStatus, JoyConDriver, STATUS_TEXT } from '@/input/joycon/JoyConDriver';
-import { type PhoneDevice, PhoneHub, phoneUrl } from '@/input/phone/PhoneHub';
+import {
+  devLanInfo,
+  type PhoneDevice,
+  PhoneHub,
+  phonePageUrl,
+  RelayGameLink,
+  RtcGameLink,
+} from '@/input/phone/PhoneHub';
+import { isValidRoom, randomCode } from '@/net/signal';
 import type { PhoneButton } from '@/input/phone/protocol';
 import { ImuRecorder } from '@/input/replay/recording';
 import {
@@ -287,7 +295,60 @@ function removeCtx(ctx: DeviceCtx): void {
 }
 
 // ---------------------------------------------------------------- 手机
-const hub = new PhoneHub();
+let hub: PhoneHub | null = null;
+
+/** 房间号记在本机，刷新页面后手机上的网址仍然有效 */
+function roomCode(): string {
+  const fromUrl = new URLSearchParams(location.search).get('room');
+  if (isValidRoom(fromUrl)) return fromUrl;
+  try {
+    const saved = localStorage.getItem('rea-room');
+    if (isValidRoom(saved)) return saved;
+    const r = randomCode(8);
+    localStorage.setItem('rea-room', r);
+    return r;
+  } catch {
+    return randomCode(8);
+  }
+}
+
+/**
+ * 选择手机连接方式：本地开发服务器（有 /api/lan）默认用中转；线上部署（或 ?link=rtc）用 WebRTC 直连。
+ */
+async function setupPhones(): Promise<void> {
+  const lan = await devLanInfo();
+  const useRtc = new URLSearchParams(location.search).get('link') === 'rtc' || !lan;
+  const room = useRtc ? roomCode() : null;
+  hub = new PhoneHub(useRtc ? new RtcGameLink(room!) : new RelayGameLink());
+  hub.onPhoneAdded = attachPhone;
+  hub.onPhoneRemoved = detachPhone;
+  hub.onStatus = (text, ok) => {
+    $('hub-status').innerHTML = `<span class="${ok ? 'ok' : 'warn'}">● ${text}</span>`;
+  };
+  hub.connect();
+
+  $('link-mode').textContent = useRtc
+    ? '连接方式：WebRTC 直连（体感数据在 Wi-Fi 内点对点传输，只有握手经过公共服务器）'
+    : '连接方式：本地中转（经这台 Mac 上的开发服务器）';
+  $('room-code').textContent = room ? `房间号：${room}` : '';
+  // 线上部署是正规证书，也不经过 Mac 的服务器：隐藏证书和防火墙两条提示
+  $('li-cert').hidden = !lan;
+  $('li-firewall').hidden = !lan || useRtc;
+
+  const url = phonePageUrl(lan, room);
+  const a = $<HTMLAnchorElement>('phone-url');
+  if (!url) {
+    a.textContent = '没找到这台 Mac 的局域网地址（确认已连上 Wi-Fi）';
+    return;
+  }
+  a.textContent = url;
+  a.href = url;
+  try {
+    await QRCode.toCanvas($<HTMLCanvasElement>('qr'), url, { width: 180, margin: 1 });
+  } catch (e) {
+    log(`二维码生成失败：${(e as Error).message}`);
+  }
+}
 
 function attachPhone(p: PhoneDevice): void {
   const key = `phone-${p.id}`;
@@ -314,22 +375,6 @@ function detachPhone(p: PhoneDevice): void {
   if (!ctx) return;
   log(`手机断开：${deviceName(ctx)}`);
   removeCtx(ctx);
-}
-
-async function showPhoneQr(): Promise<void> {
-  const url = await phoneUrl();
-  const a = $<HTMLAnchorElement>('phone-url');
-  if (!url) {
-    a.textContent = '没找到这台 Mac 的局域网地址（确认已连上 Wi-Fi）';
-    return;
-  }
-  a.textContent = url;
-  a.href = url;
-  try {
-    await QRCode.toCanvas($<HTMLCanvasElement>('qr'), url, { width: 180, margin: 1 });
-  } catch (e) {
-    log(`二维码生成失败：${(e as Error).message}`);
-  }
 }
 
 // ---------------------------------------------------------------- 按键显示
@@ -525,15 +570,7 @@ function stopRecording(): void {
 // ---------------------------------------------------------------- 绑定
 function bindUi(): void {
   // 手机
-  hub.onPhoneAdded = attachPhone;
-  hub.onPhoneRemoved = detachPhone;
-  hub.onStatus = (ok) => {
-    $('hub-status').innerHTML = ok
-      ? '<span class="ok">● 等待手机连接（已连上中转服务）</span>'
-      : '<span class="warn">● 正在连接中转服务…</span>';
-  };
-  hub.connect();
-  void showPhoneQr();
+  void setupPhones();
 
   // Joy-Con
   if (!isWebHidSupported()) {

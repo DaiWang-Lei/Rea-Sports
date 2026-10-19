@@ -237,3 +237,15 @@ pre#log {
   margin-bottom: 6px;
   word-break: break-all;
 }
+
+.room-code {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--warn);
+  margin: 6px 0;
+}
+
+[hidden] {
+  display: none !important;
+}

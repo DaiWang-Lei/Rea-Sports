@@ -3,6 +3,24 @@
 用手机或 Switch 一代 Joy-Con 当球拍、在电视上玩的体感乒乓球，手感对标 Wii Sports Resort 的乒乓球。
 净室重做：只复刻玩法机制，不使用任天堂的任何代码、素材、名称或音乐。
 
+## 在线版（不用装任何东西）
+
+- 首页：https://daiwang-lei.github.io/Rea-Sports/
+- 体感调试页：https://daiwang-lei.github.io/Rea-Sports/imu-debug.html
+
+在线版里，手机用 **WebRTC 直连**电脑：只有「握手」消息经过公共免费的 MQTT 服务器（EMQX，国内节点优先），
+体感数据在同一 Wi-Fi 里由手机直接发给电脑，延迟和本地一样。用法：
+
+1. 电脑打开在线版的体感调试页，页面上会显示**房间号**和二维码。
+2. 手机连同一个 Wi-Fi，扫码（iPhone 用相机，安卓用 Chrome 或系统浏览器，不要用微信扫），点「开始」。
+3. 正规证书，不会再出现「连接不是私密连接」；也不用开 Mac 上的开发服务器。
+
+说明：
+
+- 握手消息在公共服务器上是公开可见的，所以房间号是随机生成的 8 位字母数字；里面只有建立连接用的信息，没有体感数据。
+- 极少数路由器（开了「AP 隔离」或屏蔽组播）会让直连失败，这时改用下面的本地模式。
+- 每次推送到 main，GitHub Actions 会自动跑检查、构建并发布（`.github/workflows/deploy.yml`）。
+
 ## 运行
 
 ```bash
@@ -57,7 +75,9 @@ pnpm typecheck      # 类型检查（含「纯逻辑层不得依赖 DOM」的检
 pnpm lint
 pnpm soak --games 200 --a 3 --b 3 --points 6   # 无界面批量对局统计
 pnpm bench:solver   # 求解器性能
-pnpm smoke:phone    # 冒烟测试：模拟一台手机经中转服务器发数据给调试页（需先 pnpm dev）
+pnpm smoke:phone    # 冒烟测试：模拟一台手机经本地中转发数据给调试页（需先 pnpm dev）
+pnpm smoke:rtc [网址]  # 冒烟测试：两个浏览器页面经 WebRTC 直连（默认本地；也可传线上网址）
+pnpm smoke:mqtt     # 测试公共 MQTT 握手服务器能否连通
 pnpm shot /phone.html out.png 390 844   # 截图（需先 pnpm dev）
 pnpm build
 ```
@@ -76,6 +96,7 @@ src/app/       入口、游戏循环
 src/debug/     体感调试页
 src/phone/     手机控制器页
 server/        开发服务器插件：手机数据的 WebSocket 中转、局域网地址
+src/net/       极简 MQTT 客户端、WebRTC 握手约定
 tests/         vitest 测试
 scripts/       soak（批量对局）、bench-solver
 ```
