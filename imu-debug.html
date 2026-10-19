@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Joy-Con 体感调试</title>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <h1>Joy-Con 体感调试</h1>
+        <a href="/">返回游戏</a>
+      </header>
+
+      <section class="card" id="sec-connect">
+        <h2>1. 连接</h2>
+        <ol class="steps dim">
+          <li>
+            在 Mac 的「系统设置 → 蓝牙」里配对：按住 Joy-Con
+            导轨侧面的小圆形配对键，直到指示灯来回闪烁， 然后在列表里点「连接」。
+          </li>
+          <li>点下面的按钮，在弹出的窗口里选择 Joy-Con。授权一次后，刷新页面会自动连上。</li>
+          <li>建议戴好 Joy-Con 腕带。</li>
+        </ol>
+        <div class="row">
+          <button class="primary" id="btn-connect">连接 Joy-Con</button>
+          <span id="hid-support" class="dim"></span>
+        </div>
+        <div id="devices" class="devices"></div>
+      </section>
+
+      <section class="card" id="sec-calib">
+        <h2>2. 校准与回中</h2>
+        <div class="row">
+          <button id="btn-layflat">平放校准（2 秒）</button>
+          <button id="btn-recenter">回中</button>
+          <span class="dim">回中：手柄肩键一端指向屏幕，点按钮或按手柄 Y / ↑ 键。</span>
+        </div>
+        <div class="kv" id="calib-stats"></div>
+      </section>
+
+      <section class="card grid2">
+        <div>
+          <h2>3. 实时数据</h2>
+          <div class="chart-label">陀螺仪（度/秒）</div>
+          <canvas class="chart" id="chart-gyro"></canvas>
+          <div class="chart-label">加速度（g）</div>
+          <canvas class="chart" id="chart-accel"></canvas>
+          <div class="chart-label">角速度大小（弧度/秒），黄线 = 录制时的挥拍提示</div>
+          <canvas class="chart" id="chart-omega"></canvas>
+          <div class="kv" id="live-stats"></div>
+        </div>
+        <div>
+          <h2>4. 姿态</h2>
+          <canvas class="view3d" id="view3d"></canvas>
+          <p class="dim small">
+            红色方块是手柄，白色面是按键面，黑色一端是肩键。坐标轴：红 X、绿 Y（指向屏幕）、蓝
+            Z（向上）。
+          </p>
+        </div>
+      </section>
+
+      <section class="card" id="sec-checks">
+        <h2>5. 检查清单</h2>
+        <div class="checks">
+          <div>
+            <h3>六个面静止（|a| 应为 1.00 ± 0.02 g）</h3>
+            <p class="dim small">把手柄依次以 6 个面朝上放稳 1 秒。</p>
+            <table id="six-face"></table>
+          </div>
+          <div>
+            <h3>陀螺仪 / 加速度计方向一致性</h3>
+            <p class="dim small">拿着手柄朝各个方向慢慢转动（不要甩），直到进度满。</p>
+            <div id="axis-check"></div>
+            <div class="row"><button id="btn-axis-reset">重新检查</button></div>
+          </div>
+          <div>
+            <h3>静止偏航漂移（应 &lt; 2°/分钟）</h3>
+            <p class="dim small">平放校准后把手柄放着不动至少 10 秒。</p>
+            <div id="yaw-drift"></div>
+          </div>
+          <div>
+            <h3>按键</h3>
+            <div id="buttons" class="buttons"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card grid2">
+        <div>
+          <h2>6. 震动测试</h2>
+          <div class="row" id="rumble-buttons"></div>
+        </div>
+        <div>
+          <h2>7. 录制挥拍样本</h2>
+          <p class="dim small">
+            「跟着提示音挥拍」：2 秒后开始，每 1.6 秒响一声，听到就做一次正常的正手挥拍，共 10
+            次，结束后自动下载 JSON。请把文件发给我用来调挥拍识别。
+          </p>
+          <div class="row">
+            <button id="btn-rec-beep" class="primary">跟着提示音挥拍</button>
+            <button id="btn-rec-free">自由录制</button>
+            <button id="btn-rec-stop" disabled>停止并下载</button>
+          </div>
+          <div id="rec-status" class="dim"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>日志</h2>
+        <pre id="log"></pre>
+      </section>
+    </div>
+    <script type="module" src="/src/debug/imuDebug.ts"></script>
+  </body>
+</html>

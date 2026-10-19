@@ -1,0 +1,26 @@
+{
+  "//": "纯逻辑层（仿真、核心数学、输入解析/融合/挥拍识别）：不允许依赖 DOM、three.js，以便以后移植到电视 App。",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": [
+    "src/core",
+    "src/sim",
+    "src/config/tuning.ts",
+    "src/config/difficulty.ts",
+    "src/config/rules.ts",
+    "src/input/types.ts",
+    "src/input/clock",
+    "src/input/fusion",
+    "src/input/paddle",
+    "src/input/joycon/protocol.ts",
+    "src/input/joycon/calibration.ts",
+    "src/input/joycon/rumble.ts",
+    "src/input/joycon/stream.ts",
+    "src/input/diagnostics.ts",
+    "src/input/replay/recording.ts",
+    "src/config/haptics.ts"
+  ]
+}

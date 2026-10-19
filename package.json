@@ -1,0 +1,38 @@
+{
+  "name": "rea-sports",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "体感乒乓球（Joy-Con + WebHID），手感对标 Wii Sports Resort 乒乓球的净室重做",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sim.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "soak": "tsx scripts/soak.ts",
+    "bench:solver": "tsx scripts/bench-solver.ts"
+  },
+  "dependencies": {
+    "lil-gui": "^0.21.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.19.43",
+    "@types/three": "^0.186.0",
+    "@types/w3c-web-hid": "^1.0.7",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4",
+    "vitest": "^4.1.12"
+  }
+}

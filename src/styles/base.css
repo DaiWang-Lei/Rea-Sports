@@ -1,0 +1,75 @@
+:root {
+  --bg: #0f1418;
+  --panel: #182027;
+  --panel-2: #1f2a33;
+  --border: #2c3a45;
+  --text: #e8edf1;
+  --text-dim: #9fb0bd;
+  --accent: #36b37e;
+  --accent-2: #2f9bdf;
+  --warn: #f5a524;
+  --danger: #ef5b5b;
+  --ok: #3ccf91;
+  --chart-grid: #33424e;
+  --chart-text: #9fb0bd;
+  --chart-mark: #f5a524;
+  --radius: 10px;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent-2);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06140e;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+a {
+  color: var(--accent-2);
+}
+
+.ok {
+  color: var(--ok);
+}
+.warn {
+  color: var(--warn);
+}
+.bad {
+  color: var(--danger);
+}
+.dim {
+  color: var(--text-dim);
+}

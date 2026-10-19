@@ -1,0 +1,147 @@
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    system-ui, sans-serif;
+  color: #fff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+
+.hud-score {
+  position: absolute;
+  top: 3vh;
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px);
+  opacity: 0;
+  transition:
+    opacity 0.25s,
+    transform 0.25s;
+  background: rgba(10, 16, 24, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  padding: 1.2vh 2.4vw;
+  text-align: center;
+}
+
+.hud-score.visible {
+  opacity: 1;
+  transform: translateX(-50%);
+}
+
+.score-label {
+  font-size: 1.6vh;
+  color: #f5c542;
+  margin-bottom: 0.4vh;
+  letter-spacing: 0.1em;
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 1.4vw;
+  font-size: 3vh;
+}
+
+.score-row .num {
+  font-size: 5.2vh;
+  font-weight: 700;
+  min-width: 2ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-row .colon {
+  font-size: 4vh;
+  opacity: 0.6;
+}
+
+.score-row .name.near {
+  color: #8cc4ff;
+}
+
+.score-row .name.far {
+  color: #ffab94;
+}
+
+.serve-dot {
+  display: inline-block;
+  width: 1.4vh;
+  height: 1.4vh;
+  border-radius: 50%;
+  background: #fff;
+  margin: 0 0.6vw;
+  vertical-align: middle;
+}
+
+.hud-center {
+  position: absolute;
+  top: 34%;
+  left: 0;
+  right: 0;
+  text-align: center;
+}
+
+.hud-msg {
+  font-size: 7vh;
+  font-weight: 800;
+  opacity: 0;
+  transform: scale(0.9);
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+
+.hud-msg.show {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.hud-msg.good {
+  color: #7cf0b0;
+}
+
+.hud-msg.bad {
+  color: #ff9a8a;
+}
+
+.hud-msg.big {
+  font-size: 10vh;
+  color: #f5c542;
+}
+
+.hud-sub {
+  margin-top: 1vh;
+  font-size: 3vh;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.hud-sub.show {
+  opacity: 0.9;
+}
+
+.hud-corner {
+  position: absolute;
+  left: 2vw;
+  bottom: 2.5vh;
+  font-size: 1.8vh;
+  opacity: 0.75;
+  line-height: 1.6;
+}
+
+.hud-hint {
+  position: absolute;
+  right: 2vw;
+  bottom: 2.5vh;
+  font-size: 2vh;
+  opacity: 0;
+  background: rgba(10, 16, 24, 0.6);
+  padding: 0.8vh 1.2vw;
+  border-radius: 8px;
+  transition: opacity 0.3s;
+}
+
+.hud-hint.visible {
+  opacity: 0.9;
+}
