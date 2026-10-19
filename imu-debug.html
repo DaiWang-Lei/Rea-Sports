@@ -3,28 +3,59 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Joy-Con 体感调试</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2240%22 cy=%2240%22 r=%2230%22 fill=%22%23d62828%22/%3E%3Crect x=%2252%22 y=%2258%22 width=%2214%22 height=%2236%22 rx=%225%22 transform=%22rotate(-45 59 76)%22 fill=%22%23c9a46a%22/%3E%3Ccircle cx=%2278%22 cy=%2224%22 r=%2210%22 fill=%22%23fff%22/%3E%3C/svg%3E"
+    />
+    <title>体感调试</title>
   </head>
   <body>
     <div class="page">
       <header>
-        <h1>Joy-Con 体感调试</h1>
+        <h1>体感调试（手机 / Joy-Con）</h1>
         <a href="/">返回游戏</a>
       </header>
 
       <section class="card" id="sec-connect">
-        <h2>1. 连接</h2>
-        <ol class="steps dim">
-          <li>
-            在 Mac 的「系统设置 → 蓝牙」里配对：按住 Joy-Con
-            导轨侧面的小圆形配对键，直到指示灯来回闪烁， 然后在列表里点「连接」。
-          </li>
-          <li>点下面的按钮，在弹出的窗口里选择 Joy-Con。授权一次后，刷新页面会自动连上。</li>
-          <li>建议戴好 Joy-Con 腕带。</li>
-        </ol>
-        <div class="row">
-          <button class="primary" id="btn-connect">连接 Joy-Con</button>
-          <span id="hid-support" class="dim"></span>
+        <h2>1. 连接体感控制器</h2>
+        <div class="connect-grid">
+          <div class="connect-box">
+            <h3>用手机（推荐先用它测试）</h3>
+            <div class="phone-connect">
+              <canvas id="qr" width="180" height="180"></canvas>
+              <div>
+                <div class="url-line">
+                  手机打开：<a id="phone-url" target="_blank">获取地址中…</a>
+                </div>
+                <ol class="steps dim">
+                  <li>手机和这台 Mac 连<strong>同一个 Wi-Fi</strong>。</li>
+                  <li>扫码：iPhone 用相机；安卓用 Chrome 或系统浏览器的扫一扫（不要用微信扫）。</li>
+                  <li>
+                    出现「连接不是私密连接」时：iPhone 点「显示详细信息 → 访问此网站」，安卓 Chrome
+                    点「高级 → 继续前往」。
+                  </li>
+                  <li>点「开始」；iPhone 会询问「动作与方向」，选「允许」。</li>
+                  <li>Mac 如果弹出「是否允许 node 接受传入的网络连接」，选「允许」。</li>
+                </ol>
+                <div id="hub-status" class="dim"></div>
+              </div>
+            </div>
+          </div>
+          <div class="connect-box">
+            <h3>用 Joy-Con</h3>
+            <ol class="steps dim">
+              <li>
+                在 Mac 的「系统设置 → 蓝牙」里配对：按住 Joy-Con
+                导轨侧面的小圆形配对键，直到指示灯来回闪烁，然后在列表里点「连接」。
+              </li>
+              <li>点下面的按钮，在弹出的窗口里选择 Joy-Con。授权一次后，刷新页面会自动连上。</li>
+              <li>建议戴好 Joy-Con 腕带。</li>
+            </ol>
+            <div class="row">
+              <button class="primary" id="btn-connect">连接 Joy-Con</button>
+              <span id="hid-support" class="dim"></span>
+            </div>
+          </div>
         </div>
         <div id="devices" class="devices"></div>
       </section>
@@ -34,7 +65,10 @@
         <div class="row">
           <button id="btn-layflat">平放校准（2 秒）</button>
           <button id="btn-recenter">回中</button>
-          <span class="dim">回中：手柄肩键一端指向屏幕，点按钮或按手柄 Y / ↑ 键。</span>
+          <span class="dim"
+            >回中：手机顶端（或 Joy-Con 肩键一端）指向屏幕，点按钮，或按手机上的「回中」/ Joy-Con 的
+            Y、↑ 键。</span
+          >
         </div>
         <div class="kv" id="calib-stats"></div>
       </section>
@@ -54,8 +88,8 @@
           <h2>4. 姿态</h2>
           <canvas class="view3d" id="view3d"></canvas>
           <p class="dim small">
-            红色方块是手柄，白色面是按键面，黑色一端是肩键。坐标轴：红 X、绿 Y（指向屏幕）、蓝
-            Z（向上）。
+            Joy-Con：红色方块，白色面是按键面，黑色一端是肩键。手机：深蓝色是屏幕，黑色小条在顶端。坐标轴：红
+            X、绿 Y（指向屏幕）、蓝 Z（向上）。
           </p>
         </div>
       </section>
@@ -65,7 +99,7 @@
         <div class="checks">
           <div>
             <h3>六个面静止（|a| 应为 1.00 ± 0.02 g）</h3>
-            <p class="dim small">把手柄依次以 6 个面朝上放稳 1 秒。</p>
+            <p class="dim small">把手机（或手柄）依次以 6 个面朝上放稳 1 秒。</p>
             <table id="six-face"></table>
           </div>
           <div>
@@ -75,8 +109,8 @@
             <div class="row"><button id="btn-axis-reset">重新检查</button></div>
           </div>
           <div>
-            <h3>静止偏航漂移（应 &lt; 2°/分钟）</h3>
-            <p class="dim small">平放校准后把手柄放着不动至少 10 秒。</p>
+            <h3>静止偏航漂移（Joy-Con 应 &lt; 2°/分钟，手机 &lt; 5°/分钟）</h3>
+            <p class="dim small">平放校准后放着不动至少 10 秒。</p>
             <div id="yaw-drift"></div>
           </div>
           <div>

@@ -198,3 +198,42 @@ pre#log {
   color: var(--text-dim);
   white-space: pre-wrap;
 }
+
+.connect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .connect-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.connect-box {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.phone-connect {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.phone-connect canvas {
+  flex: none;
+  width: 180px;
+  height: 180px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.url-line {
+  font-size: 14px;
+  margin-bottom: 6px;
+  word-break: break-all;
+}

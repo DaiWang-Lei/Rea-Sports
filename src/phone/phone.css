@@ -1,0 +1,129 @@
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.phone {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+
+header h1 {
+  font-size: 20px;
+  margin: 0 0 8px;
+}
+
+.status {
+  display: inline-block;
+  font-size: 14px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.status.ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.status.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.safety {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #ffd7a3;
+  background: rgba(245, 165, 36, 0.12);
+  border: 1px solid rgba(245, 165, 36, 0.4);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.hold {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.msg {
+  color: var(--danger);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+button {
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button.big {
+  width: 100%;
+  font-size: 20px;
+  padding: 18px;
+  border-radius: 14px;
+}
+
+#controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+#controls[hidden],
+#setup[hidden] {
+  display: none;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+}
+
+button.mid {
+  flex: 1;
+  font-size: 18px;
+  padding: 18px 0;
+  border-radius: 14px;
+}
+
+button.huge {
+  flex: 1;
+  min-height: 160px;
+  font-size: 26px;
+  font-weight: 700;
+  border-radius: 20px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06140e;
+}
+
+button.down {
+  filter: brightness(0.75);
+  transform: scale(0.98);
+}
+
+.info {
+  margin: 0;
+  font-size: 15px;
+  text-align: center;
+}
+
+.debug {
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: break-all;
+}

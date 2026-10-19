@@ -21,6 +21,7 @@
     "src/input/joycon/stream.ts",
     "src/input/diagnostics.ts",
     "src/input/replay/recording.ts",
-    "src/config/haptics.ts"
+    "src/config/haptics.ts",
+    "src/input/phone/protocol.ts"
   ]
 }

@@ -1,13 +1,16 @@
 /**
- * M0 连接验证页：连接 Joy-Con、看实时数据与姿态、跑检查清单、测震动、录制挥拍样本。
+ * 连接验证页：连接手机或 Joy-Con、看实时数据与姿态、跑检查清单、测震动、录制挥拍样本。
+ * 手机和 Joy-Con 输出同一种 ImuSample，后面的融合与检查完全共用。
  */
 import '@/styles/base.css';
 import './imuDebug.css';
+import QRCode from 'qrcode';
 import { HAPTIC_LABELS, HAPTICS, type HapticEvent } from '@/config/haptics';
 import { fromAxisAngle, multiply, type Quat, quat, rotate } from '@/core/quat';
 import { length, vec3 } from '@/core/vec3';
 import {
   AxisConsistencyCheck,
+  type Face,
   FACE_LABELS,
   FACES,
   SixFaceCheck,
@@ -21,29 +24,51 @@ import {
   onJoyConDisconnect,
   requestJoyCons,
 } from '@/input/HidManager';
+import { DEFAULT_CALIBRATION } from '@/input/joycon/calibration';
 import { type DriverStatus, JoyConDriver, STATUS_TEXT } from '@/input/joycon/JoyConDriver';
+import { type PhoneDevice, PhoneHub, phoneUrl } from '@/input/phone/PhoneHub';
+import type { PhoneButton } from '@/input/phone/protocol';
 import { ImuRecorder } from '@/input/replay/recording';
-import { BUTTON_NAMES, type Buttons, isLogicalDown, type ButtonName } from '@/input/types';
+import {
+  type ButtonName,
+  BUTTON_NAMES,
+  type Buttons,
+  type ImuSample,
+  isLogicalDown,
+} from '@/input/types';
 import { OrientationView } from './OrientationView';
 import { ScrollChart } from './ScrollChart';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
+type DeviceKind = 'joycon' | 'phone';
+
 interface DeviceCtx {
-  driver: JoyConDriver;
+  key: string;
+  kind: DeviceKind;
+  joycon?: JoyConDriver;
+  phone?: PhoneDevice;
   motion: MotionState;
   axis: AxisConsistencyCheck;
   six: SixFaceCheck;
   yaw: YawDriftCheck;
   yawAlign: Quat;
   card: HTMLElement;
-  status: DriverStatus;
-  last: { reports: number; samples: number; t: number };
-  rates: { reportHz: number; sampleHz: number };
+  joyStatus: DriverStatus;
+  last: { samples: number; t: number };
+  sampleHz: number;
 }
 
-const devices = new Map<HIDDevice, DeviceCtx>();
+const devices = new Map<string, DeviceCtx>();
+const hidKeys = new WeakMap<HIDDevice, string>();
+let hidCounter = 0;
 let active: DeviceCtx | null = null;
+
+function deviceName(ctx: DeviceCtx): string {
+  if (ctx.kind === 'joycon') return ctx.joycon!.name;
+  const p = ctx.phone!;
+  return `${p.platformText} · ${p.name}`;
+}
 
 // ---------------------------------------------------------------- 日志
 const logLines: string[] = [];
@@ -85,48 +110,80 @@ try {
   log(`3D 视图初始化失败：${(e as Error).message}`);
 }
 
-// ---------------------------------------------------------------- 设备
+function setActive(ctx: DeviceCtx | null): void {
+  active = ctx;
+  view?.setModel(ctx?.kind ?? 'joycon');
+  for (const c of devices.values()) renderCard(c);
+}
+
+// ---------------------------------------------------------------- 设备卡片
 function batteryText(level: number, charging: boolean): string {
   if (level < 0) return '—';
   const pct = Math.round((level / 8) * 100);
   return `${pct}%${charging ? '（充电中）' : ''}`;
 }
 
+const kv = (label: string, value: string, cls = '') =>
+  `<div><span>${label}</span><b class="${cls}">${value}</b></div>`;
+
 function renderCard(ctx: DeviceCtx): void {
-  const d = ctx.driver;
-  const st = d.stream.stats;
-  const clk = d.stream.clock.stats();
-  const statusClass =
-    ctx.status === 'streaming'
-      ? 'ok'
-      : ctx.status === 'stalled' || ctx.status === 'closed'
-        ? 'bad'
-        : 'warn';
-  const calSource = { factory: '出厂', user: '用户', default: '默认（未读到）' }[
-    d.stream.calibration.source
-  ];
+  let statusText: string;
+  let statusClass: string;
+  let rows: string;
+  const hzClass = (min: number) => (ctx.sampleHz >= min ? 'ok' : ctx.sampleHz > 0 ? 'warn' : '');
+  if (ctx.kind === 'joycon') {
+    const d = ctx.joycon!;
+    const st = d.stream.stats;
+    const clk = d.stream.clock.stats();
+    statusText = STATUS_TEXT[ctx.joyStatus];
+    statusClass =
+      ctx.joyStatus === 'streaming'
+        ? 'ok'
+        : ctx.joyStatus === 'stalled' || ctx.joyStatus === 'closed'
+          ? 'bad'
+          : 'warn';
+    const calSource = { factory: '出厂', user: '用户', default: '默认（未读到）' }[
+      d.stream.calibration.source
+    ];
+    const lossPct = clk.reports
+      ? ((clk.droppedReports / (clk.reports + clk.droppedReports)) * 100).toFixed(2)
+      : '0.00';
+    rows =
+      kv('电量', batteryText(d.stream.battery, d.stream.charging)) +
+      kv('IMU 校准', calSource) +
+      kv('样本频率', `${ctx.sampleHz.toFixed(0)} /秒`, hzClass(195)) +
+      kv('样本间隔', `${clk.sampleIntervalMs.toFixed(2)} ms`) +
+      kv('丢包', `${clk.droppedReports}（${lossPct}%）`) +
+      kv('蓝牙延迟估计', `${clk.lastLatencyMs.toFixed(1)} ms`) +
+      kv('重新初始化', `${d.reinitCount} 次`) +
+      kv('数据顶格', `${st.clippedSamples} 个样本`) +
+      kv('计时字节步长', String(clk.timerStep ?? '学习中/不可用'));
+  } else {
+    const p = ctx.phone!;
+    const flowing = performance.now() - p.lastSampleAt < 1000;
+    statusText = !p.connected ? '已断开' : flowing ? '数据正常' : '已连接，等待在手机上点「开始」';
+    statusClass = !p.connected ? 'bad' : flowing ? 'ok' : 'warn';
+    const m = p.meta;
+    const sign =
+      m?.accelSign === 1 ? '标准' : m?.accelSign === -1 ? '已自动修正（反向）' : '判断中';
+    rows =
+      kv('平台', m ? p.platformText : '—') +
+      kv('样本频率', `${ctx.sampleHz.toFixed(0)} /秒`, hzClass(50)) +
+      kv('网络往返', Number.isNaN(p.rttMs) ? '—' : `${p.rttMs.toFixed(0)} ms`) +
+      kv('本次额外延迟', `${p.jitterMs.toFixed(0)} ms`) +
+      kv('丢失样本', String(p.lostSamples)) +
+      kv('加速度方向', sign, m?.accelSign ? 'ok' : 'warn') +
+      kv('陀螺仪', m ? (m.hasGyro ? '有' : '没有') : '—', m && !m.hasGyro ? 'bad' : '') +
+      kv('震动', m ? (m.canVibrate ? '支持' : '不支持（iPhone 浏览器）') : '—');
+  }
   ctx.card.innerHTML = `
     <div class="dev-head">
-      <strong>${d.name}</strong>
-      <span class="${statusClass}">${STATUS_TEXT[ctx.status]}</span>
-      ${active === ctx ? '<span class="tag">正在查看</span>' : '<button data-act="view">查看这只</button>'}
+      <strong>${deviceName(ctx)}</strong>
+      <span class="${statusClass}">${statusText}</span>
+      ${active === ctx ? '<span class="tag">正在查看</span>' : '<button data-act="view">查看这个</button>'}
     </div>
-    <div class="kv">
-      <div><span>电量</span><b>${batteryText(d.stream.battery, d.stream.charging)}</b></div>
-      <div><span>IMU 校准</span><b>${calSource}</b></div>
-      <div><span>报告频率</span><b>${ctx.rates.reportHz.toFixed(1)} Hz</b></div>
-      <div><span>样本频率</span><b class="${ctx.rates.sampleHz >= 195 ? 'ok' : ctx.rates.sampleHz > 0 ? 'warn' : ''}">${ctx.rates.sampleHz.toFixed(0)} /秒</b></div>
-      <div><span>样本间隔</span><b>${clk.sampleIntervalMs.toFixed(2)} ms</b></div>
-      <div><span>丢包</span><b>${clk.droppedReports}（${clk.reports ? ((clk.droppedReports / (clk.reports + clk.droppedReports)) * 100).toFixed(2) : '0.00'}%）</b></div>
-      <div><span>蓝牙延迟估计</span><b>${clk.lastLatencyMs.toFixed(1)} ms</b></div>
-      <div><span>重新初始化</span><b>${d.reinitCount} 次</b></div>
-      <div><span>数据顶格</span><b>${st.clippedSamples} 个样本</b></div>
-      <div><span>计时字节步长</span><b>${clk.timerStep ?? '学习中/不可用'}</b></div>
-    </div>`;
-  ctx.card.querySelector('[data-act="view"]')?.addEventListener('click', () => {
-    active = ctx;
-    for (const c of devices.values()) renderCard(c);
-  });
+    <div class="kv">${rows}</div>`;
+  ctx.card.querySelector('[data-act="view"]')?.addEventListener('click', () => setActive(ctx));
 }
 
 function recenter(ctx: DeviceCtx): void {
@@ -135,45 +192,60 @@ function recenter(ctx: DeviceCtx): void {
   if (Math.hypot(v.x, v.y) < 0.3) v = rotate(q, vec3(0, 0, 1));
   const yaw0 = Math.atan2(v.y, v.x);
   ctx.yawAlign = fromAxisAngle(0, 0, 1, Math.PI / 2 - yaw0);
-  log(`${ctx.driver.name} 已回中`);
+  log(`${deviceName(ctx)} 已回中`);
 }
 
-async function attach(device: HIDDevice): Promise<void> {
-  if (devices.has(device)) return;
-  const driver = new JoyConDriver(device);
+function newCtx(key: string, kind: DeviceKind): DeviceCtx {
   const ctx: DeviceCtx = {
-    driver,
+    key,
+    kind,
     motion: new MotionState(),
     axis: new AxisConsistencyCheck(),
     six: new SixFaceCheck(),
     yaw: new YawDriftCheck(),
     yawAlign: quat(),
     card: document.createElement('div'),
-    status: 'idle',
-    last: { reports: 0, samples: 0, t: performance.now() },
-    rates: { reportHz: 0, sampleHz: 0 },
+    joyStatus: 'idle',
+    last: { samples: 0, t: performance.now() },
+    sampleHz: 0,
   };
   ctx.card.className = 'device';
   $('devices').appendChild(ctx.card);
-  devices.set(device, ctx);
-  if (!active || driver.side === 'R') active = ctx;
+  devices.set(key, ctx);
+  return ctx;
+}
 
+let totalSamples = new Map<string, number>();
+
+function onSamples(ctx: DeviceCtx, samples: ImuSample[]): void {
+  totalSamples.set(ctx.key, (totalSamples.get(ctx.key) ?? 0) + samples.length);
+  for (const s of samples) {
+    const f = ctx.motion.process(s);
+    ctx.axis.add(s);
+    ctx.six.add(s);
+    ctx.yaw.add(f.t, f.q, length(f.omegaWorld));
+    if (ctx === active) {
+      gyroChart.push(s.t, [s.gyro.x, s.gyro.y, s.gyro.z]);
+      accelChart.push(s.t, [s.accel.x, s.accel.y, s.accel.z]);
+      omegaChart.push(s.t, [length(f.gyro)]);
+    }
+    if (rec && rec.ctx === ctx && ctx.kind === 'phone') rec.recorder.addSample(s);
+  }
+}
+
+// ---------------------------------------------------------------- Joy-Con
+async function attachJoyCon(device: HIDDevice): Promise<void> {
+  if (hidKeys.has(device) && devices.has(hidKeys.get(device)!)) return;
+  const key = `hid-${hidCounter++}`;
+  hidKeys.set(device, key);
+  const driver = new JoyConDriver(device);
+  const ctx = newCtx(key, 'joycon');
+  ctx.joycon = driver;
+  if (!active || active.kind !== 'joycon' || driver.side === 'R') setActive(ctx);
   driver.events = {
-    onSamples: (samples) => {
-      for (const s of samples) {
-        const f = ctx.motion.process(s);
-        ctx.axis.add(s);
-        ctx.six.add(s);
-        ctx.yaw.add(f.t, f.q, length(f.omegaWorld));
-        if (ctx === active) {
-          gyroChart.push(s.t, [s.gyro.x, s.gyro.y, s.gyro.z]);
-          accelChart.push(s.t, [s.accel.x, s.accel.y, s.accel.z]);
-          omegaChart.push(s.t, [length(f.gyro)]);
-        }
-      }
-    },
+    onSamples: (s) => onSamples(ctx, s),
     onButtons: (b, prev) => {
-      if (ctx === active) renderButtons(b, driver.side);
+      if (ctx === active) renderJoyButtons(b, driver.side);
       if (
         isLogicalDown(driver.side, b, 'recenter') &&
         !isLogicalDown(driver.side, prev, 'recenter')
@@ -182,7 +254,7 @@ async function attach(device: HIDDevice): Promise<void> {
       }
     },
     onStatus: (status) => {
-      ctx.status = status;
+      ctx.joyStatus = status;
       renderCard(ctx);
     },
     onRawReport: (id, data, arrival) => {
@@ -199,18 +271,73 @@ async function attach(device: HIDDevice): Promise<void> {
   }
 }
 
-function detach(device: HIDDevice): void {
-  const ctx = devices.get(device);
+function detachJoyCon(device: HIDDevice): void {
+  const key = hidKeys.get(device);
+  const ctx = key ? devices.get(key) : undefined;
   if (!ctx) return;
-  ctx.driver.markDisconnected();
+  ctx.joycon!.markDisconnected();
+  removeCtx(ctx);
+}
+
+function removeCtx(ctx: DeviceCtx): void {
   renderCard(ctx);
-  devices.delete(device);
+  devices.delete(ctx.key);
   setTimeout(() => ctx.card.remove(), 3000);
-  if (active === ctx) active = devices.values().next().value ?? null;
+  if (active === ctx) setActive(devices.values().next().value ?? null);
+}
+
+// ---------------------------------------------------------------- 手机
+const hub = new PhoneHub();
+
+function attachPhone(p: PhoneDevice): void {
+  const key = `phone-${p.id}`;
+  if (devices.has(key)) return;
+  const ctx = newCtx(key, 'phone');
+  ctx.phone = p;
+  // 先连上的设备默认查看；手机优先于还没出数据的设备
+  if (!active) setActive(ctx);
+  p.events = {
+    onSamples: (s) => onSamples(ctx, s),
+    onButton: (name, down) => {
+      if (ctx === active) renderPhoneButtons(p.buttons);
+      if (name === 'recenter' && down) recenter(ctx);
+    },
+    onMeta: () => renderCard(ctx),
+    onLog: log,
+  };
+  log(`手机已连接：${deviceName(ctx)}`);
+  renderCard(ctx);
+}
+
+function detachPhone(p: PhoneDevice): void {
+  const ctx = devices.get(`phone-${p.id}`);
+  if (!ctx) return;
+  log(`手机断开：${deviceName(ctx)}`);
+  removeCtx(ctx);
+}
+
+async function showPhoneQr(): Promise<void> {
+  const url = await phoneUrl();
+  const a = $<HTMLAnchorElement>('phone-url');
+  if (!url) {
+    a.textContent = '没找到这台 Mac 的局域网地址（确认已连上 Wi-Fi）';
+    return;
+  }
+  a.textContent = url;
+  a.href = url;
+  try {
+    await QRCode.toCanvas($<HTMLCanvasElement>('qr'), url, { width: 180, margin: 1 });
+  } catch (e) {
+    log(`二维码生成失败：${(e as Error).message}`);
+  }
 }
 
 // ---------------------------------------------------------------- 按键显示
-function renderButtons(b: Buttons, side: 'L' | 'R'): void {
+function chip(on: boolean, text: string): string {
+  return `<span class="chip ${on ? 'on' : ''}">${text}</span>`;
+}
+
+function renderJoyButtons(b: Buttons, side: 'L' | 'R'): void {
   const relevant: ButtonName[] =
     side === 'R'
       ? ['a', 'b', 'x', 'y', 'r', 'zr', 'plus', 'home', 'rStick', 'slR', 'srR']
@@ -233,16 +360,31 @@ function renderButtons(b: Buttons, side: 'L' | 'R'): void {
   };
   $('buttons').innerHTML = relevant
     .filter((n) => BUTTON_NAMES.includes(n))
-    .map((n) => `<span class="chip ${b[n] ? 'on' : ''}">${names[n] ?? n.toUpperCase()}</span>`)
+    .map((n) => chip(b[n], names[n] ?? n.toUpperCase()))
     .join('');
 }
 
+function renderPhoneButtons(b: Record<PhoneButton, boolean>): void {
+  $('buttons').innerHTML =
+    chip(b.confirm, '确认 / 抛球') + chip(b.recenter, '回中') + chip(b.pause, '暂停');
+}
+
 // ---------------------------------------------------------------- 检查清单
+const PHONE_FACE_LABELS: Record<Face, string> = {
+  '+Z': '屏幕朝上',
+  '-Z': '屏幕朝下',
+  '+X': '顶端朝上',
+  '-X': '顶端朝下',
+  '+Y': '左侧朝上',
+  '-Y': '右侧朝上',
+};
+
 function renderChecks(ctx: DeviceCtx): void {
+  const labels = ctx.kind === 'phone' ? PHONE_FACE_LABELS : FACE_LABELS;
   $('six-face').innerHTML = FACES.map((f) => {
     const v = ctx.six.cells[f];
     const cls = v === null ? 'dim' : Math.abs(v - 1) <= 0.02 ? 'ok' : 'bad';
-    return `<tr><td>${FACE_LABELS[f]}</td><td class="${cls}">${v === null ? '—' : v.toFixed(3) + ' g'}</td></tr>`;
+    return `<tr><td>${labels[f]}</td><td class="${cls}">${v === null ? '—' : v.toFixed(3) + ' g'}</td></tr>`;
   }).join('');
 
   const r = ctx.axis.result();
@@ -257,23 +399,34 @@ function renderChecks(ctx: DeviceCtx): void {
     `<div class="progress"><div style="width:${pct}%"></div></div>${verdict}`;
 
   const drift = ctx.yaw.driftDegPerMin;
+  const target = ctx.kind === 'phone' ? 5 : 2;
   $('yaw-drift').innerHTML =
     drift === null
       ? `<span class="dim">已静止 ${ctx.yaw.stillSeconds.toFixed(0)} 秒（需要 10 秒）</span>`
-      : `<span class="${drift < 2 ? 'ok' : 'bad'}">${drift.toFixed(2)} °/分钟</span> <span class="dim">（静止 ${ctx.yaw.stillSeconds.toFixed(0)} 秒）</span>`;
+      : `<span class="${drift < target ? 'ok' : 'bad'}">${drift.toFixed(2)} °/分钟</span> <span class="dim">（静止 ${ctx.yaw.stillSeconds.toFixed(0)} 秒）</span>`;
 }
 
 function renderCalibStats(ctx: DeviceCtx): void {
   const b = ctx.motion.gyroBias;
   const f = ctx.motion.frame;
-  $('calib-stats').innerHTML = `
-    <div><span>陀螺零偏</span><b>${b.x.toFixed(2)}, ${b.y.toFixed(2)}, ${b.z.toFixed(2)} °/s</b></div>
-    <div><span>自动校准置信度</span><b>${(ctx.motion.calibrationConfidence * 100).toFixed(0)}%</b></div>
-    <div><span>状态</span><b>${ctx.motion.isLayFlatCalibrating ? '<span class="warn">平放校准中…</span>' : f.steady ? '静止' : '运动'}</b></div>`;
-  $('live-stats').innerHTML = `
-    <div><span>|a|</span><b>${length(f.accel).toFixed(3)} g</b></div>
-    <div><span>|ω|</span><b>${length(f.gyro).toFixed(2)} rad/s</b></div>
-    <div><span>线加速度（世界系）</span><b>${f.linAccWorld.x.toFixed(2)}, ${f.linAccWorld.y.toFixed(2)}, ${f.linAccWorld.z.toFixed(2)} g</b></div>`;
+  $('calib-stats').innerHTML =
+    kv('陀螺零偏', `${b.x.toFixed(2)}, ${b.y.toFixed(2)}, ${b.z.toFixed(2)} °/s`) +
+    kv('自动校准置信度', `${(ctx.motion.calibrationConfidence * 100).toFixed(0)}%`) +
+    kv(
+      '状态',
+      ctx.motion.isLayFlatCalibrating
+        ? '<span class="warn">平放校准中…</span>'
+        : f.steady
+          ? '静止'
+          : '运动'
+    );
+  $('live-stats').innerHTML =
+    kv('|a|', `${length(f.accel).toFixed(3)} g`) +
+    kv('|ω|', `${length(f.gyro).toFixed(2)} rad/s`) +
+    kv(
+      '线加速度（世界系）',
+      `${f.linAccWorld.x.toFixed(2)}, ${f.linAccWorld.y.toFixed(2)}, ${f.linAccWorld.z.toFixed(2)} g`
+    );
 }
 
 // ---------------------------------------------------------------- 录制
@@ -292,17 +445,34 @@ function beep(): void {
   osc.stop(t + 0.15);
 }
 
-let rec: { ctx: DeviceCtx; recorder: ImuRecorder; timers: number[]; mode: 'beep' | 'free' } | null =
-  null;
+let rec: {
+  ctx: DeviceCtx;
+  recorder: ImuRecorder;
+  timers: number[];
+  mode: 'beep' | 'free';
+} | null = null;
 
 function startRecording(mode: 'beep' | 'free'): void {
   if (!active) {
-    log('请先连接 Joy-Con');
+    log('请先连接手机或 Joy-Con');
     return;
   }
   audioCtx ??= new AudioContext();
   const ctx = active;
-  const recorder = new ImuRecorder(ctx.driver.side, ctx.driver.stream.calibration);
+  const recorder =
+    ctx.kind === 'joycon'
+      ? new ImuRecorder(
+          ctx.joycon!.side,
+          ctx.joycon!.stream.calibration,
+          'joycon',
+          ctx.joycon!.name
+        )
+      : new ImuRecorder(
+          'R',
+          DEFAULT_CALIBRATION,
+          'phone',
+          `${deviceName(ctx)} · ${ctx.phone!.meta?.ua ?? ''}`
+        );
   const timers: number[] = [];
   rec = { ctx, recorder, timers, mode };
   if (mode === 'beep') {
@@ -338,12 +508,13 @@ function stopRecording(): void {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const who = data.source === 'phone' ? 'phone' : data.side;
   a.href = URL.createObjectURL(blob);
-  a.download = `imu-${data.side}-${rec.mode}-${stamp}.json`;
+  a.download = `imu-${who}-${rec.mode}-${stamp}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  $('rec-status').textContent =
-    `已保存 ${data.reports.length} 个报告、${data.markers.length} 个标记`;
+  const n = data.source === 'phone' ? (data.samples?.length ?? 0) : data.reports.length;
+  $('rec-status').textContent = `已保存 ${n} 条数据、${data.markers.length} 个标记`;
   log(`录制完成：${a.download}`);
   rec = null;
   $<HTMLButtonElement>('btn-rec-stop').disabled = true;
@@ -353,35 +524,47 @@ function stopRecording(): void {
 
 // ---------------------------------------------------------------- 绑定
 function bindUi(): void {
+  // 手机
+  hub.onPhoneAdded = attachPhone;
+  hub.onPhoneRemoved = detachPhone;
+  hub.onStatus = (ok) => {
+    $('hub-status').innerHTML = ok
+      ? '<span class="ok">● 等待手机连接（已连上中转服务）</span>'
+      : '<span class="warn">● 正在连接中转服务…</span>';
+  };
+  hub.connect();
+  void showPhoneQr();
+
+  // Joy-Con
   if (!isWebHidSupported()) {
     $('hid-support').innerHTML =
-      '<span class="bad">当前浏览器不支持 WebHID，请用桌面版 Chrome 或 Edge 打开。</span>';
+      '<span class="bad">当前浏览器不支持 WebHID，Joy-Con 请用桌面版 Chrome 或 Edge。</span>';
     $<HTMLButtonElement>('btn-connect').disabled = true;
-    return;
+  } else {
+    $('btn-connect').addEventListener('click', async () => {
+      try {
+        const ds = await requestJoyCons();
+        if (ds.length === 0) log('没有选择设备');
+        for (const d of ds) void attachJoyCon(d);
+      } catch (e) {
+        log(`连接失败：${(e as Error).message}`);
+      }
+    });
+    onJoyConConnect((d) => {
+      log('检测到 Joy-Con 连接');
+      void attachJoyCon(d);
+    });
+    onJoyConDisconnect((d) => {
+      log('Joy-Con 断开');
+      detachJoyCon(d);
+    });
+    void getGrantedJoyCons().then((ds) => ds.forEach((d) => void attachJoyCon(d)));
   }
-  $('btn-connect').addEventListener('click', async () => {
-    try {
-      const ds = await requestJoyCons();
-      if (ds.length === 0) log('没有选择设备');
-      for (const d of ds) void attach(d);
-    } catch (e) {
-      log(`连接失败：${(e as Error).message}`);
-    }
-  });
-  onJoyConConnect((d) => {
-    log('检测到 Joy-Con 连接');
-    void attach(d);
-  });
-  onJoyConDisconnect((d) => {
-    log('Joy-Con 断开');
-    detach(d);
-  });
-  void getGrantedJoyCons().then((ds) => ds.forEach((d) => void attach(d)));
 
   $('btn-layflat').addEventListener('click', () => {
     if (!active) return;
     active.motion.beginLayFlat(performance.now());
-    log('平放校准：请保持手柄静止 2 秒');
+    log('平放校准：请把设备平放、保持静止 2 秒');
   });
   $('btn-recenter').addEventListener('click', () => active && recenter(active));
   $('btn-axis-reset').addEventListener('click', () => active?.axis.reset());
@@ -390,7 +573,11 @@ function bindUi(): void {
   for (const e of Object.keys(HAPTICS) as HapticEvent[]) {
     const b = document.createElement('button');
     b.textContent = HAPTIC_LABELS[e];
-    b.addEventListener('click', () => active?.driver.rumble(HAPTICS[e]));
+    b.addEventListener('click', () => {
+      if (!active) return;
+      if (active.kind === 'joycon') active.joycon!.rumble(HAPTICS[e]);
+      else active.phone!.rumble(HAPTICS[e]);
+    });
     rb.appendChild(b);
   }
 
@@ -413,22 +600,23 @@ function frame(): void {
   if (now - lastStats > 250) {
     lastStats = now;
     for (const ctx of devices.values()) {
-      const st = ctx.driver.stream.stats;
+      const total = totalSamples.get(ctx.key) ?? 0;
       const dt = (now - ctx.last.t) / 1000;
       if (dt >= 1) {
-        ctx.rates.reportHz = (st.fullReports - ctx.last.reports) / dt;
-        ctx.rates.sampleHz = (st.samples - ctx.last.samples) / dt;
-        ctx.last = { reports: st.fullReports, samples: st.samples, t: now };
+        ctx.sampleHz = (total - ctx.last.samples) / dt;
+        ctx.last = { samples: total, t: now };
       }
       renderCard(ctx);
     }
     if (active) {
       renderChecks(active);
       renderCalibStats(active);
+      if (active.kind === 'phone') renderPhoneButtons(active.phone!.buttons);
     }
   }
   requestAnimationFrame(frame);
 }
 
+totalSamples = new Map();
 bindUi();
 requestAnimationFrame(frame);

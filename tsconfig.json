@@ -20,5 +20,5 @@
     },
     "types": ["vite/client", "w3c-web-hid", "node"]
   },
-  "include": ["src", "tests", "scripts", "vite.config.ts"]
+  "include": ["src", "tests", "scripts", "server", "vite.config.ts"]
 }

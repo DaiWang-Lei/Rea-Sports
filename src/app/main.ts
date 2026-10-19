@@ -81,8 +81,8 @@ function showMenu(): void {
       <p class="dim">手感对标 Wii Sports Resort 乒乓球的净室重做 · 开发中</p>
       <div class="menu-items">
         <a class="menu-item" href="/imu-debug.html">
-          <strong>Joy-Con 连接与体感调试</strong>
-          <span>M0：配对、看数据、跑检查清单、录挥拍样本</span>
+          <strong>体感调试（手机 / Joy-Con）</strong>
+          <span>M0：扫码连手机或配对 Joy-Con、看数据、跑检查清单、录挥拍样本</span>
         </a>
         <a class="menu-item" href="?mode=autoplay">
           <strong>观看电脑对打（自动演示）</strong>

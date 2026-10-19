@@ -21,6 +21,7 @@ const PURE_LAYERS = [
   'src/input/diagnostics.ts',
   'src/input/replay/**',
   'src/config/haptics.ts',
+  'src/input/phone/protocol.ts',
 ];
 
 export default defineConfig([

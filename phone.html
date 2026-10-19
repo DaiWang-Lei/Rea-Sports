@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#0f1418" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2240%22 cy=%2240%22 r=%2230%22 fill=%22%23d62828%22/%3E%3Crect x=%2252%22 y=%2258%22 width=%2214%22 height=%2236%22 rx=%225%22 transform=%22rotate(-45 59 76)%22 fill=%22%23c9a46a%22/%3E%3Ccircle cx=%2278%22 cy=%2224%22 r=%2210%22 fill=%22%23fff%22/%3E%3C/svg%3E"
+    />
+    <title>体感乒乓 · 手机控制器</title>
+  </head>
+  <body>
+    <div class="phone">
+      <header>
+        <h1>体感乒乓 · 手机控制器</h1>
+        <div id="status" class="status">正在连接电脑…</div>
+      </header>
+
+      <div class="safety">
+        ⚠️ 握紧手机，最好挂上手机绳；先小幅度轻挥，确认手感后再加力；注意周围的人和易碎物品。
+      </div>
+
+      <div id="setup">
+        <button id="btn-start" class="primary big">开始（允许读取体感）</button>
+        <p id="setup-msg" class="msg"></p>
+      </div>
+
+      <div id="controls" hidden>
+        <p class="hold">
+          握法：竖着握住手机下半部分，像握球拍柄一样，拇指放在最下面的大按钮上。<br />
+          开始后先把手机<strong>屏幕朝上平放</strong>一两秒，方便自动校准。
+        </p>
+        <div class="row">
+          <button id="btn-recenter" class="mid" data-btn="recenter">回中</button>
+          <button id="btn-pause" class="mid" data-btn="pause">暂停</button>
+        </div>
+        <button id="btn-confirm" class="huge" data-btn="confirm">确认 / 抛球</button>
+      </div>
+
+      <p id="info" class="info"></p>
+      <footer id="debug" class="debug"></footer>
+    </div>
+    <script type="module" src="/src/phone/phone.ts"></script>
+  </body>
+</html>
