@@ -125,3 +125,10 @@ export function isImuRecording(x: unknown): x is ImuRecording {
   const r = x as ImuRecording;
   return !!r && r.format === 'rea-sports-imu' && r.version === 1 && Array.isArray(r.reports);
 }
+
+/** 取出一段录制里的全部样本（按时间先后），用于离线分析与测试 */
+export function recordingSamples(rec: ImuRecording): ImuSample[] {
+  const out: ImuSample[] = [];
+  replayRecording(rec, { onSamples: (s) => out.push(...s) });
+  return out;
+}

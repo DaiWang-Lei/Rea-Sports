@@ -17,6 +17,7 @@ import {
   YawDriftCheck,
 } from '@/input/diagnostics';
 import { MotionState } from '@/input/fusion/MotionState';
+import { SWING_PROFILES, type SwingCommit, SwingDetector } from '@/input/paddle/SwingDetector';
 import {
   getGrantedJoyCons,
   isWebHidSupported,
@@ -57,6 +58,7 @@ interface DeviceCtx {
   joycon?: JoyConDriver;
   phone?: PhoneDevice;
   motion: MotionState;
+  swing: SwingDetector;
   axis: AxisConsistencyCheck;
   six: SixFaceCheck;
   yaw: YawDriftCheck;
@@ -208,6 +210,7 @@ function newCtx(key: string, kind: DeviceKind): DeviceCtx {
     key,
     kind,
     motion: new MotionState(),
+    swing: new SwingDetector(kind === 'phone' ? SWING_PROFILES.phone : SWING_PROFILES.joycon),
     axis: new AxisConsistencyCheck(),
     six: new SixFaceCheck(),
     yaw: new YawDriftCheck(),
@@ -229,6 +232,11 @@ function onSamples(ctx: DeviceCtx, samples: ImuSample[]): void {
   totalSamples.set(ctx.key, (totalSamples.get(ctx.key) ?? 0) + samples.length);
   for (const s of samples) {
     const f = ctx.motion.process(s);
+    if (ctx === active) {
+      for (const e of ctx.swing.process(f)) if (e.type === 'commit') showSwing(e);
+    } else {
+      ctx.swing.process(f);
+    }
     ctx.axis.add(s);
     ctx.six.add(s);
     ctx.yaw.add(f.t, f.q, length(f.omegaWorld));
@@ -239,6 +247,20 @@ function onSamples(ctx: DeviceCtx, samples: ImuSample[]): void {
     }
     if (rec && rec.ctx === ctx && ctx.kind === 'phone') rec.recorder.addSample(s);
   }
+}
+
+const swingItems: string[] = [];
+function showSwing(c: SwingCommit): void {
+  const vertical = c.dir === 0 || c.yawFrac < 0.3;
+  const cls = vertical ? 'v' : c.dir > 0 ? 'fh' : 'bh';
+  // 右手：逆时针 = 正手（左手玩家的正反手相反）
+  const name = vertical ? '上下挥' : c.dir > 0 ? '正手' : '反手';
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  swingItems.unshift(
+    `<div class="swing-item ${cls}"><b>${name}</b> ${c.wPeak.toFixed(0)} rad/s${c.path === 'gentle' ? '（慢）' : ''}<br/><span class="dim">${time}</span></div>`
+  );
+  if (swingItems.length > 12) swingItems.pop();
+  $('swing-list').innerHTML = swingItems.join('');
 }
 
 // ---------------------------------------------------------------- Joy-Con

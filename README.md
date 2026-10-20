@@ -6,6 +6,7 @@
 ## 在线版（不用装任何东西）
 
 - 首页：https://daiwang-lei.github.io/Rea-Sports/
+- 发球机练习：https://daiwang-lei.github.io/Rea-Sports/?mode=practice
 - 体感调试页：https://daiwang-lei.github.io/Rea-Sports/imu-debug.html
 
 在线版里，手机用 **WebRTC 直连**电脑：只有「握手」消息经过公共免费的 MQTT 服务器（EMQX，国内节点优先），
@@ -32,12 +33,13 @@ pnpm dev          # 打开 https://localhost:5288
 - 端口固定为 5288（WebHID 的授权按网址记忆，端口变了要重新授权）。电脑上请用 **桌面版 Chrome**。
 - 服务器监听局域网，同一 Wi-Fi 下的手机才能连上来。
 
-| 页面       | 地址                                  | 用途                                                   |
-| ---------- | ------------------------------------- | ------------------------------------------------------ |
-| 菜单       | https://localhost:5288/               | 入口                                                   |
-| 体感调试页 | https://localhost:5288/imu-debug.html | 连接手机或 Joy-Con、看数据、检查清单、震动、录挥拍样本 |
-| 手机控制器 | 扫调试页上的二维码                    | 手机当球拍                                             |
-| 自动演示   | https://localhost:5288/?mode=autoplay | 电脑对电脑，看物理/规则/AI/画面/声音                   |
+| 页面       | 地址                                  | 用途                                                               |
+| ---------- | ------------------------------------- | ------------------------------------------------------------------ |
+| 菜单       | https://localhost:5288/               | 入口                                                               |
+| 发球机练习 | https://localhost:5288/?mode=practice | 用手机 / Joy-Con / 键盘挥拍回球，每球给出时机、正反手、力度、旋转  |
+| 体感调试页 | https://localhost:5288/imu-debug.html | 连接手机或 Joy-Con、看数据、检查清单、震动、录挥拍样本、看挥拍识别 |
+| 手机控制器 | 扫调试页上的二维码                    | 手机当球拍                                                         |
+| 自动演示   | https://localhost:5288/?mode=autoplay | 电脑对电脑，看物理/规则/AI/画面/声音                               |
 
 自动演示的参数：`a`、`b` = 两边电脑等级 1–5，`points` = 6 或 11，`speed` = 速度倍率（如 0.3 慢放），`seed` = 随机种子，`skip` = 开局先快进的秒数。
 
@@ -53,6 +55,20 @@ pnpm dev          # 打开 https://localhost:5288
 6. 握法：竖着握住手机下半部分，像握球拍柄一样，拇指放在「确认 / 抛球」大按钮上。**握紧、最好挂手机绳**，先小幅度轻挥。
 
 手机采样约 60 次/秒（Joy-Con 约 200 次/秒），足够测试功能；安卓 Chrome 支持震动反馈，iPhone 浏览器不支持震动。
+
+## 发球机练习怎么玩
+
+1. 打开发球机练习，扫码连手机（或点「连接 Joy-Con」，没有设备可以先用键盘：F 正手、J 反手）。
+2. **回中**：把手机顶端（Joy-Con 肩键一端）**平着指向电视**，按手机上的「回中」（Joy-Con 的 Y 键）。
+3. **准备姿势**：像握球拍一样握住，**屏幕（Joy-Con 按键面）朝向电视、拍头朝上**，按「确认」（Joy-Con 的 A 键）。
+   这一步记下你的握法，下次自动沿用；也可以跳过，只是不判断拍面角度。
+4. 发球机开始送球。球在你这边弹起、来到身前时挥拍：
+   - 右手正手从右往左挥，反手从左往右挥（左手相反，暂停菜单里可以切换）；
+   - **早挥打斜线、晚挥打直线**，太早 / 太晚会挥空，在球弹起之前就打到算「未落台击球」；
+   - 挥得越快球越快；拍面前压或由下往上刷 → 上旋，拍面后仰或由上往下切 → 下旋；
+   - 每一球右上角都有结果卡片：早 / 晚多少毫秒、正反手、力度、球路。
+5. 暂停（手机「暂停」/ Joy-Con + / Esc）里可以调难度、落点、宽容度、画面延迟补偿；
+   打满 5 球后可以「按我的平均时机校准」，把电视的画面延迟补回来。
 
 ## 连接 Joy-Con（macOS）
 
@@ -78,6 +94,10 @@ pnpm bench:solver   # 求解器性能
 pnpm smoke:phone    # 冒烟测试：模拟一台手机经本地中转发数据给调试页（需先 pnpm dev）
 pnpm smoke:rtc [网址]  # 冒烟测试：两个浏览器页面经 WebRTC 直连（默认本地；也可传线上网址）
 pnpm smoke:mqtt     # 测试公共 MQTT 握手服务器能否连通
+pnpm smoke:practice [网址]      # 发球机练习冒烟测试：键盘模式按时机自动挥拍
+pnpm smoke:practice-phone       # 模拟一台手机走完回中 → 准备姿势 → 挥拍回球（需先 pnpm dev）
+pnpm analyze:imu fixtures/imu/xxx.json   # 分析录制：采样率、丢包、蓝牙延迟、挥拍
+pnpm eval:swing fixtures/imu/xxx.json    # 在录制上跑挥拍识别
 pnpm shot /phone.html out.png 390 844   # 截图（需先 pnpm dev）
 pnpm build
 ```
@@ -87,16 +107,19 @@ pnpm build
 ```
 src/core/      数学（向量、四元数、可复现随机数）
 src/config/    手感参数 tuning、电脑难度、震动预设
-src/input/     Joy-Con（协议、校准、震动、WebHID 驱动）、手机（消息、坐标换算、接收）、时间戳、姿态融合、诊断、录制回放
-src/sim/       仿真（纯 TS）：球的物理、击球求解器、裁判与记分、走位、电脑 AI、整局比赛 MatchSim
+src/input/     Joy-Con（协议、校准、震动、WebHID 驱动）、手机（消息、坐标换算、接收）、时间戳、姿态融合、
+               挥拍识别与球拍模型（paddle/）、诊断、录制回放
+src/sim/       仿真（纯 TS）：球的物理、击球求解器、裁判与记分、走位、电脑 AI、整局比赛 MatchSim、
+               玩家击球判定与映射（hit/HitResolver）、发球机练习（practice/FeederSim）
 src/render/    three.js 画面：场地、球与影子、人物与球拍、相机
 src/audio/     程序化音效
 src/ui/        画面文字层（比分、提示）
-src/app/       入口、游戏循环
+src/app/       入口、自动演示、发球机练习页、体感输入管理（input/）
 src/debug/     体感调试页
 src/phone/     手机控制器页
 server/        开发服务器插件：手机数据的 WebSocket 中转、局域网地址
 src/net/       极简 MQTT 客户端、WebRTC 握手约定
+fixtures/imu/  真机录制（Joy-Con / iPhone 的正手提示音录制和自由挥拍），用于调参和回归测试
 tests/         vitest 测试
 scripts/       soak（批量对局）、bench-solver
 ```
@@ -106,9 +129,10 @@ scripts/       soak（批量对局）、bench-solver
 
 ## 进度
 
-- [x] M0 连接验证：Joy-Con 驱动（WebHID）、手机控制器（Wi-Fi 中转）、时间戳、姿态融合、调试页、检查清单、录制器 —— **待实机验证**
+- [x] M0 连接验证：Joy-Con 驱动（WebHID）、手机控制器（Wi-Fi / WebRTC）、时间戳、姿态融合、调试页、检查清单、录制器
+      —— 已用真机录制验证：Joy-Con 约 199 次/秒、iPhone 60 次/秒，数据完整
 - [x] M1 物理 / 规则 / 电脑 AI / 自动演示
-- [ ] M2 玩家球拍 1:1 + 挥拍识别 + 击球判定 + 发球机练习
+- [x] M2 挥拍识别 + 击球判定 + 发球机练习（手机 / Joy-Con / 键盘）—— **待实机试打**
 - [ ] M3 完整比赛（发球、菜单、震动、结算）
 - [ ] M4 对照 WSR 视频调手感
 

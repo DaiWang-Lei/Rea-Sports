@@ -84,7 +84,7 @@ export interface FullReport {
   battery: number;
   charging: boolean;
   buttonBytes: [number, number, number];
-  /** 3 个样本 × (ax, ay, az, gx, gy, gz)，最旧的在前 */
+  /** 3 个样本 × (ax, ay, az, gx, gy, gz)，按报告原样排列：第 0 个是最新的 */
   imu: Int16Array;
 }
 

@@ -249,3 +249,33 @@ pre#log {
 [hidden] {
   display: none !important;
 }
+
+.swing-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.swing-item {
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--panel-2);
+}
+
+.swing-item.fh {
+  border-color: #7cf0b0;
+}
+
+.swing-item.bh {
+  border-color: #8cc4ff;
+}
+
+.swing-item.v {
+  border-color: #f5c542;
+}
+
+.swing-item b {
+  font-size: 16px;
+}

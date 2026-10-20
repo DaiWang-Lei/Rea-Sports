@@ -20,7 +20,11 @@
     "smoke:phone": "tsx scripts/smoke-phone.ts",
     "shot": "tsx scripts/shot.ts",
     "smoke:mqtt": "tsx scripts/smoke-mqtt.ts",
-    "smoke:rtc": "tsx scripts/smoke-rtc.ts"
+    "smoke:rtc": "tsx scripts/smoke-rtc.ts",
+    "analyze:imu": "tsx scripts/analyze-imu.ts",
+    "smoke:practice": "tsx scripts/smoke-practice.ts",
+    "smoke:practice-phone": "tsx scripts/smoke-practice-phone.ts",
+    "eval:swing": "tsx scripts/eval-swing.ts"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",

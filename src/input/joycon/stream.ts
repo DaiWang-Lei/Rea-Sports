@@ -85,8 +85,10 @@ export class JoyConStream {
       this.stats.lastImuAt = arrival;
       const { times } = this.clock.onReport(arrival, r.timer);
       const samples: ImuSample[] = [];
-      for (let i = 0; i < 3; i++) {
-        const s = convertSample(r.imu, i, this.scale, this.side, times[i]);
+      // 报告里第 0 个样本是最新的（实测录制数据：按「新 → 旧」排信号才连续，反过来会出现 5ms 级的锯齿），
+      // 这里按时间先后输出
+      for (let k = 0; k < 3; k++) {
+        const s = convertSample(r.imu, 2 - k, this.scale, this.side, times[k]);
         if (s.clipped) this.stats.clippedSamples++;
         samples.push(s);
       }

@@ -8,6 +8,7 @@ import { sideDir, type Side, TABLE } from '@/sim/constants';
 import { forehandSign, type PlayerSim } from '@/sim/players/PlayerSim';
 import { buildArena } from './Arena';
 import { AvatarView } from './AvatarView';
+import { BallMachineView } from './BallMachineView';
 import { BallView, type TrailStyle } from './BallView';
 import type { PaddlePose } from './paddlePose';
 
@@ -36,7 +37,10 @@ export interface RenderFrame {
   ball: Vec3;
   ballVisible: boolean;
   trail: TrailStyle;
-  players: Record<Side, RenderPlayer>;
+  /** 远端没有人（发球机练习）时可以不给 far */
+  players: { near: RenderPlayer; far?: RenderPlayer };
+  /** 发球机出球口位置；给了就画发球机、不画远端人物 */
+  machine?: Vec3;
   /** 震屏：剩余强度（米） */
   shake: number;
 }
@@ -48,6 +52,7 @@ export class Renderer {
   readonly root = new THREE.Group();
   readonly ballView: BallView;
   readonly avatars: Record<Side, AvatarView>;
+  readonly machine: BallMachineView;
   private camX = 0;
   private lastT = 0;
 
@@ -68,6 +73,7 @@ export class Renderer {
       near: new AvatarView(this.root, 0x2f80ed, true),
       far: new AvatarView(this.root, 0xe2583e, false),
     };
+    this.machine = new BallMachineView(this.root);
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
@@ -90,8 +96,10 @@ export class Renderer {
 
     for (const side of ['near', 'far'] as const) {
       const rp = frame.players[side];
-      this.avatars[side].update(rp.body, sideDir(side), forehandSign(rp.player), rp.paddle);
+      this.avatars[side].group.visible = !!rp;
+      if (rp) this.avatars[side].update(rp.body, sideDir(side), forehandSign(rp.player), rp.paddle);
     }
+    this.machine.update(frame.machine ?? null);
     // 球靠近自己时，自己再透明一些
     const near = frame.players.near.body;
     const dNear = Math.hypot(frame.ball.x - near.x, frame.ball.y - near.y);
