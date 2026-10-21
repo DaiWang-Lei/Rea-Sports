@@ -456,11 +456,18 @@ function renderChecks(ctx: DeviceCtx): void {
 
   const r = ctx.axis.result();
   const pct = Math.round(r.progress * 100);
-  let verdict = '<span class="dim">继续慢慢转动…</span>';
-  if (r.ready) {
-    verdict = r.consistent
-      ? '<span class="ok">✓ 一致</span>'
-      : `<span class="bad">✗ 不一致：最吻合的陀螺轴符号为 (${r.bestSigns.join(', ')})，请把这个结果告诉我</span>`;
+  const err = (v: number) => `${v.toFixed(1)}°`;
+  let verdict = `<span class="dim">换个朝向、停稳… 已完成 ${r.intervals} 次</span>`;
+  if (r.verdict === 'consistent') {
+    verdict = `<span class="ok">✓ 一致（推算误差 ${err(r.errIdentity)}）</span>`;
+  } else if (r.verdict === 'inconsistent') {
+    verdict =
+      `<span class="bad">✗ 不一致：陀螺仪的轴更像 ${r.best}（误差 ${err(r.errBest)}，原样 ` +
+      `${err(r.errIdentity)}），请把这个结果告诉我</span>`;
+  } else if (r.verdict === 'unclear') {
+    verdict =
+      `<span class="dim">还看不出（原样误差 ${err(r.errIdentity)}）：多换几种朝向，` +
+      `比如竖起来、侧放、翻过来</span>`;
   }
   $('axis-check').innerHTML =
     `<div class="progress"><div style="width:${pct}%"></div></div>${verdict}`;

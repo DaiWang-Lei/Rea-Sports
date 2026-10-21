@@ -1,9 +1,18 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { fromAxisAngle, multiply, quat, rotateInverse } from '@/core/quat';
-import { vec3 } from '@/core/vec3';
+import { Rng } from '@/core/rng';
+import { type Vec3, vec3 } from '@/core/vec3';
 import { AxisConsistencyCheck, SixFaceCheck } from '@/input/diagnostics';
 import { DEFAULT_CALIBRATION } from '@/input/joycon/calibration';
-import { fromHex, ImuRecorder, replayRecording, toHex } from '@/input/replay/recording';
+import {
+  fromHex,
+  ImuRecorder,
+  type ImuRecording,
+  recordingSamples,
+  replayRecording,
+  toHex,
+} from '@/input/replay/recording';
 import type { ImuSample } from '@/input/types';
 
 describe('录制与回放', () => {
@@ -36,45 +45,84 @@ describe('录制与回放', () => {
   });
 });
 
-/** 产生一段「慢慢转动」的理想 IMU 数据；gyroSigns 用来模拟陀螺某些轴符号接反 */
-function slowRotation(gyroSigns: [number, number, number]): ImuSample[] {
+/**
+ * 「换个朝向 → 停稳」反复 12 次的 IMU 数据：每次绕随机轴转 60–150°（0.6 秒，中间快两头慢），再停 0.4 秒，
+ * 带一点噪声。mapGyro 模拟陀螺仪读数接错：输入正确的机体系角速度（度/秒），返回读数。
+ */
+function poseChanges(mapGyro: (w: Vec3) => Vec3 = (w) => w): ImuSample[] {
+  const rng = new Rng(3);
   const out: ImuSample[] = [];
   let q = quat();
   const dt = 0.005;
-  const UP = vec3(0, 0, 1);
-  for (let i = 0; i < 3000; i++) {
-    const t = i * dt;
-    // 角速度（机体系，度/秒）：三轴都有、缓慢变化
-    const w = vec3(60 * Math.sin(t * 1.3), 50 * Math.cos(t * 0.9), 40 * Math.sin(t * 0.7 + 1));
-    q = multiply(q, fromAxisAngle(w.x, w.y, w.z, Math.hypot(w.x, w.y, w.z) * (Math.PI / 180) * dt));
-    const a = rotateInverse(q, UP);
+  let t = 0;
+  const push = (w: Vec3) => {
+    const up = rotateInverse(q, vec3(0, 0, 1));
+    const n = () => rng.normal(0, 0.01);
+    const noisy = vec3(
+      w.x + rng.normal(0, 0.4),
+      w.y + rng.normal(0, 0.4),
+      w.z + rng.normal(0, 0.4)
+    );
     out.push({
       t: t * 1000,
-      gyro: vec3(w.x * gyroSigns[0], w.y * gyroSigns[1], w.z * gyroSigns[2]),
-      accel: a,
+      gyro: mapGyro(noisy),
+      accel: vec3(up.x + n(), up.y + n(), up.z + n()),
       clipped: false,
     });
+    t += dt;
+  };
+  for (let k = 0; k < 12; k++) {
+    const ax = vec3(rng.normal(0, 1), rng.normal(0, 1), rng.normal(0, 1));
+    const l = Math.hypot(ax.x, ax.y, ax.z);
+    const total = rng.uniform(60, 150);
+    for (let i = 0; i < 120; i++) {
+      const rate = ((total * Math.PI) / (2 * 0.6)) * Math.sin((Math.PI * (i + 0.5)) / 120);
+      const w = vec3((ax.x / l) * rate, (ax.y / l) * rate, (ax.z / l) * rate);
+      q = multiply(q, fromAxisAngle(w.x, w.y, w.z, rate * (Math.PI / 180) * dt));
+      push(w);
+    }
+    for (let i = 0; i < 80; i++) push(vec3());
   }
   return out;
 }
 
+function checkOn(samples: ImuSample[]) {
+  const c = new AxisConsistencyCheck();
+  for (const s of samples) c.add(s);
+  return c.result();
+}
+
 describe('诊断', () => {
   it('陀螺与加速度计轴向一致时判定为一致', () => {
-    const c = new AxisConsistencyCheck();
-    for (const s of slowRotation([1, 1, 1])) c.add(s);
-    const r = c.result();
+    const r = checkOn(poseChanges());
     expect(r.ready).toBe(true);
-    expect(r.consistent).toBe(true);
-    expect(r.bestSigns).toEqual([1, 1, 1]);
+    expect(r.verdict).toBe('consistent');
+    expect(r.best).toBe('(+X, +Y, +Z)');
+    expect(r.errIdentity).toBeLessThan(3);
   });
 
   it('陀螺 Y、Z 接反时能识别出来', () => {
-    const c = new AxisConsistencyCheck();
-    for (const s of slowRotation([1, -1, -1])) c.add(s);
-    const r = c.result();
-    expect(r.ready).toBe(true);
-    expect(r.consistent).toBe(false);
-    expect(r.bestSigns).toEqual([1, -1, -1]);
+    const r = checkOn(poseChanges((w) => vec3(w.x, -w.y, -w.z)));
+    expect(r.verdict).toBe('inconsistent');
+    expect(r.best).toBe('(+X, −Y, −Z)');
+  });
+
+  it('轴的顺序接错（旧版手机页把 alpha 当成绕 z）也能识别出来', () => {
+    // 旧版读数 l 与正确值 w 的关系：w = (−l.y, −l.z, l.x)，即 l = (w.z, −w.x, −w.y)
+    const r = checkOn(poseChanges((w) => vec3(w.z, -w.x, -w.y)));
+    expect(r.verdict).toBe('inconsistent');
+    expect(r.best).toBe('(−Y, −Z, +X)');
+  });
+
+  it('真机录制：Joy-Con 与（换算正确的）手机都判为一致，手机还原成旧换算则判为不一致', () => {
+    const load = (f: string) =>
+      recordingSamples(JSON.parse(readFileSync(`fixtures/imu/${f}`, 'utf8')) as ImuRecording);
+    expect(checkOn(load('joycon-R-beep-forehand.json')).verdict).toBe('consistent');
+    const phone = load('iphone-beep-forehand-side.json');
+    expect(checkOn(phone).verdict).toBe('consistent');
+    const old = checkOn(phone.map((s) => ({ ...s, gyro: vec3(s.gyro.z, -s.gyro.x, -s.gyro.y) })));
+    expect(old.verdict).toBe('inconsistent');
+    expect(old.best).toBe('(−Y, −Z, +X)');
   });
 
   it('六面检查：按键面朝上静止 1 秒记录 |a|', () => {

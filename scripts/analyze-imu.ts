@@ -10,7 +10,12 @@ import { rotate } from '../src/core/quat';
 import { length, vec3 } from '../src/core/vec3';
 import { AxisConsistencyCheck } from '../src/input/diagnostics';
 import { MotionState } from '../src/input/fusion/MotionState';
-import { fromHex, type ImuRecording, isImuRecording } from '../src/input/replay/recording';
+import {
+  fromHex,
+  type ImuRecording,
+  isImuRecording,
+  recordingSamples,
+} from '../src/input/replay/recording';
 import { JoyConStream } from '../src/input/joycon/stream';
 import type { ImuSample } from '../src/input/types';
 
@@ -36,13 +41,9 @@ function loadSamples(rec: ImuRecording): {
 } {
   const extra: string[] = [];
   if (rec.source === 'phone' || (rec.samples && rec.samples.length)) {
-    const samples = (rec.samples ?? []).map(([t, gx, gy, gz, ax, ay, az]): ImuSample => ({
-      t,
-      gyro: vec3(gx, gy, gz),
-      accel: vec3(ax, ay, az),
-      clipped: false,
-    }));
-    return { samples, reports: [], extra };
+    // 走统一的回放：旧版手机录制的角速度轴在这里改正
+    if (rec.gyroAxes !== 'xyz') extra.push('旧版手机录制：角速度轴已按 x/y/z 约定改正');
+    return { samples: recordingSamples(rec), reports: [], extra };
   }
   const samples: ImuSample[] = [];
   const reports: ReportInfo[] = [];
@@ -177,7 +178,14 @@ function analyze(file: string): void {
   for (const s of samples) axis.add(s);
   const ar = axis.result();
   console.log(
-    `轴向一致性：${ar.ready ? (ar.consistent ? '✓ 一致' : `✗ 不一致，最吻合符号 (${ar.bestSigns.join(',')})`) : `数据不够（进度 ${Math.round(ar.progress * 100)}%）`}`
+    `轴向一致性（两次停稳之间 ${ar.intervals} 次）：` +
+      (ar.verdict === 'consistent'
+        ? `✓ 一致，推算误差 ${f1(ar.errIdentity)}°`
+        : ar.verdict === 'inconsistent'
+          ? `✗ 不一致，陀螺轴更像 ${ar.best}（误差 ${f1(ar.errBest)}°，原样 ${f1(ar.errIdentity)}°）`
+          : ar.verdict === 'unclear'
+            ? `看不出（原样误差 ${f1(ar.errIdentity)}°，最吻合 ${ar.best} ${f1(ar.errBest)}°）`
+            : `数据不够（进度 ${Math.round(ar.progress * 100)}%）`)
   );
 
   // 融合 + 静止段

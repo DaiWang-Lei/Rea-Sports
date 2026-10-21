@@ -1,7 +1,7 @@
 /**
  * 冒烟测试（需要先 pnpm dev）：
  *  1) 无界面 Chrome 打开调试页；
- *  2) 用 Node 模拟一台手机，经中转服务器发 60Hz 体感数据（慢慢转动，数据物理上自洽），再按一下「回中」；
+ *  2) 用 Node 模拟一台手机，经中转服务器发 60Hz 体感数据（换几个朝向、每次停稳，数据物理上自洽），再按一下「回中」；
  *  3) 检查调试页出现了手机卡片、样本频率正常、轴向检查通过，截图，打印页面报错。
  * 用法：pnpm smoke:phone [截图路径]
  */
@@ -52,6 +52,7 @@ ws.send(
     hz: 60,
     canVibrate: true,
     hasGyro: true,
+    gyroAxes: 'xyz',
   })
 );
 
@@ -62,15 +63,31 @@ ws.on('message', (data) => {
   if (msg.type === 'vibrate') vibrations.push(msg.pattern);
 });
 
-// 60Hz、约 8 秒的缓慢多轴转动
+// 60Hz、约 8 秒：换个朝向（0.6 秒内绕不同的轴转约 90°）→ 停稳 0.4 秒，反复 8 次，
+// 轴向检查靠「两次停稳之间」的对比
+const AXES = [
+  vec3(1, 0.3, 0),
+  vec3(0, 1, 0.4),
+  vec3(0.2, 0, 1),
+  vec3(-1, 0.5, 0.3),
+  vec3(0.4, -1, 0),
+  vec3(0, 0.3, -1),
+  vec3(1, 1, 0),
+  vec3(0, -1, 1),
+];
 let q = quat();
 const dt = 1 / 60;
 const t0 = 5000;
 const start = Date.now();
 for (let i = 0; i < 480; i++) {
-  const t = i * dt;
-  const w = vec3(70 * Math.sin(t * 1.3), 55 * Math.cos(t * 0.9), 45 * Math.sin(t * 0.7 + 1));
-  q = multiply(q, fromAxisAngle(w.x, w.y, w.z, Math.hypot(w.x, w.y, w.z) * (Math.PI / 180) * dt));
+  const k = Math.floor(i / 60);
+  const phase = (i % 60) / 60; // 前 0.6 秒转、后 0.4 秒停
+  const ax = AXES[k];
+  const l = Math.hypot(ax.x, ax.y, ax.z);
+  // 0.6 秒内转 90°：角速度按 sin 形状，积分为 90°
+  const rate = phase < 0.6 ? ((90 * Math.PI) / (2 * 0.6)) * Math.sin((Math.PI * phase) / 0.6) : 0;
+  const w = vec3((ax.x / l) * rate, (ax.y / l) * rate, (ax.z / l) * rate);
+  q = multiply(q, fromAxisAngle(w.x, w.y, w.z, rate * (Math.PI / 180) * dt));
   const a = rotateInverse(q, vec3(0, 0, 1));
   ws.send(
     JSON.stringify({

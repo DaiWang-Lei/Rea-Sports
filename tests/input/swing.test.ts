@@ -52,9 +52,12 @@ describe('Joy-Con 报告里的样本顺序', () => {
 });
 
 describe('挥拍识别（实测录制）', () => {
+  // iphone-beep-forehand-side：手机侧着握（右侧边朝上、屏幕朝侧下方）。陀螺仪轴换算错的时候，
+  // 这种握法下正手会被判成顺时针（反手），竖直分量占比只有 0.03–0.37
   for (const [file, maxErr] of [
     ['joycon-R-beep-forehand.json', 15],
     ['iphone-beep-forehand.json', 25],
+    ['iphone-beep-forehand-side.json', 25],
   ] as const) {
     it(`${file}：10 次提示音正手全部快速确认为逆时针（正手），接触时刻预测准确`, () => {
       const rec = load(file);
@@ -74,6 +77,8 @@ describe('挥拍识别（实测录制）', () => {
         );
         if (best.type !== 'commit') throw new Error('unreachable');
         expect(best.dir).toBe(1);
+        // 主要绕竖直轴转（正手平挥），而不是被姿态误差算成上下挥
+        expect(best.yawFrac).toBeGreaterThan(0.5);
         const pk = peaks.get(best.id);
         expect(pk).toBeDefined();
         errs.push(Math.abs(best.tContact - pk!.t));

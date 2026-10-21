@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { DEG } from '@/core/math';
+import { fromAxisAngle, multiply, quat, rotateInverse } from '@/core/quat';
+import { cross, type Vec3, vec3 } from '@/core/vec3';
 import { OffsetClock } from '@/input/clock/OffsetClock';
 import { DEFAULT_CALIBRATION } from '@/input/joycon/calibration';
+import { PhoneDevice } from '@/input/phone/PhoneHub';
 import {
   AccelSignDetector,
+  legacyGyroToBody,
+  type PhoneImuMsg,
+  type PhoneMetaMsg,
   phoneToBody,
   STANDARD_GRAVITY,
   vibratePattern,
@@ -23,9 +30,94 @@ describe('手机坐标 → 机体坐标', () => {
     expect(r.accel.x).toBeCloseTo(1, 6);
   });
 
-  it('角速度轴：beta(绕手机 x) → 机体 −Y，gamma(绕手机 y) → 机体 X，alpha(绕 z) → 机体 Z', () => {
+  it('角速度轴：alpha(绕手机 x) → 机体 −Y，beta(绕手机 y) → 机体 X，gamma(绕 z) → 机体 Z', () => {
     const r = phoneToBody({ alpha: 30, beta: 10, gamma: 20 }, { x: 0, y: 0, z: 9.8 }, 1);
-    expect(r.gyro).toEqual({ x: 20, y: -10, z: 30 });
+    expect(r.gyro).toEqual({ x: 10, y: -30, z: 20 });
+  });
+
+  it('按规范产生的转动数据，换算后陀螺仪与加速度计在机体系里一致（du/dt = −ω × u）', () => {
+    // 手机系里任意转动；rotationRate 按规范（alpha/beta/gamma = 绕 x/y/z），加速度 = 「上」在手机系里 × g
+    let q = quat();
+    const dt = 0.01;
+    let prevUp: Vec3 | null = null;
+    let worst = 0;
+    for (let i = 0; i < 300; i++) {
+      const t = i * dt;
+      const w = vec3(70 * Math.sin(t * 1.7), 50 * Math.cos(t * 1.1), 60 * Math.sin(t * 0.8 + 1));
+      q = multiply(q, fromAxisAngle(w.x, w.y, w.z, Math.hypot(w.x, w.y, w.z) * DEG * dt));
+      const upPhone = rotateInverse(q, vec3(0, 0, 1));
+      const r = phoneToBody(
+        { alpha: w.x, beta: w.y, gamma: w.z },
+        {
+          x: upPhone.x * STANDARD_GRAVITY,
+          y: upPhone.y * STANDARD_GRAVITY,
+          z: upPhone.z * STANDARD_GRAVITY,
+        },
+        1
+      );
+      if (prevUp) {
+        const meas = vec3(
+          (r.accel.x - prevUp.x) / dt,
+          (r.accel.y - prevUp.y) / dt,
+          (r.accel.z - prevUp.z) / dt
+        );
+        const mid = vec3(
+          (r.accel.x + prevUp.x) / 2,
+          (r.accel.y + prevUp.y) / 2,
+          (r.accel.z + prevUp.z) / 2
+        );
+        const pred = cross(vec3(r.gyro.x * DEG, r.gyro.y * DEG, r.gyro.z * DEG), mid);
+        worst = Math.max(worst, Math.hypot(meas.x + pred.x, meas.y + pred.y, meas.z + pred.z));
+      }
+      prevUp = r.accel;
+    }
+    // 角速度约 1.5 rad/s，正确时残差只有离散化误差
+    expect(worst).toBeLessThan(0.05);
+  });
+
+  it('旧版手机页的角速度（按 alpha 绕 z 换算）能改正成新约定', () => {
+    const rng = new Rng(7);
+    for (let i = 0; i < 20; i++) {
+      const rr = {
+        alpha: rng.uniform(-300, 300),
+        beta: rng.uniform(-300, 300),
+        gamma: rng.uniform(-300, 300),
+      };
+      const old: [number, number, number] = [rr.gamma, -rr.beta, rr.alpha];
+      const fixed = legacyGyroToBody(old);
+      const want = phoneToBody(rr, { x: 0, y: 0, z: 9.8 }, 1).gyro;
+      expect(fixed[0]).toBeCloseTo(want.x, 9);
+      expect(fixed[1]).toBeCloseTo(want.y, 9);
+      expect(fixed[2]).toBeCloseTo(want.z, 9);
+    }
+  });
+
+  it('电脑端：meta 里没有 gyroAxes 的旧版手机页，角速度在电脑端改正；新版原样使用', () => {
+    const got: Vec3[] = [];
+    const dev = new PhoneDevice('p1', '测试', () => {});
+    dev.events = { onSamples: (s) => got.push(...s.map((x) => x.gyro)) };
+    const meta: PhoneMetaMsg = {
+      type: 'meta',
+      platform: 'ios',
+      ua: 'test',
+      accelSign: -1,
+      hz: 60,
+      canVibrate: false,
+      hasGyro: true,
+    };
+    const imu = (seq: number): PhoneImuMsg => ({
+      type: 'imu',
+      seq,
+      t: seq * 16,
+      g: [1, 2, 3],
+      a: [0, 0, 1],
+    });
+    dev.handle({ ...meta, gyroAxes: 'xyz' }, 1000);
+    dev.handle(imu(0), 1000);
+    dev.handle(meta, 1016);
+    dev.handle(imu(1), 1016);
+    expect(got[0]).toEqual({ x: 1, y: 2, z: 3 });
+    expect(got[1]).toEqual({ x: -2, y: -3, z: 1 });
   });
 
   it('加速度符号为 −1 时整体取反（修正反向约定的浏览器）', () => {
@@ -132,5 +224,17 @@ describe('手机录制回放', () => {
     replayRecording(data, { onSamples: (x) => got.push(...x) });
     expect(got.length).toBe(2);
     expect(got[0]).toEqual(s);
+    expect(data.gyroAxes).toBe('xyz');
+  });
+
+  it('旧版手机录制（没有 gyroAxes）回放时改正角速度轴', () => {
+    const r = new ImuRecorder('R', DEFAULT_CALIBRATION, 'phone', 'test');
+    r.addSample({ t: 1, gyro: { x: 1, y: 2, z: 3 }, accel: { x: 0, y: 0, z: 1 }, clipped: false });
+    const data = JSON.parse(JSON.stringify(r.finish()));
+    delete data.gyroAxes;
+    const got: ImuSample[] = [];
+    replayRecording(data, { onSamples: (x) => got.push(...x) });
+    expect(got[0].gyro).toEqual({ x: -2, y: -3, z: 1 });
+    expect(got[0].accel).toEqual({ x: 0, y: 0, z: 1 });
   });
 });

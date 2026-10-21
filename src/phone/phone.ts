@@ -128,6 +128,7 @@ function sendMeta(): void {
     hz,
     canVibrate,
     hasGyro,
+    gyroAxes: 'xyz',
   });
 }
 

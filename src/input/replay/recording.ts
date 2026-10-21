@@ -5,6 +5,7 @@
 import type { ImuCalibration } from '../joycon/calibration';
 import { IN_FULL, IN_SUBCMD_REPLY } from '../joycon/protocol';
 import { JoyConStream, type JoyConStreamEvents } from '../joycon/stream';
+import { legacyGyroToBody } from '../phone/protocol';
 import type { ImuSample, JoyConSide } from '../types';
 
 export interface ImuMarker {
@@ -28,6 +29,11 @@ export interface ImuRecording {
   reports: Array<[number, number, string]>;
   /** [时间（毫秒）, gx, gy, gz（度/秒）, ax, ay, az（g）]（手机） */
   samples?: Array<[number, number, number, number, number, number, number]>;
+  /**
+   * 手机录制的角速度轴约定：'xyz' = 正确的机体系。2026-10 之前的手机录制没有这个字段，
+   * 当时手机页把 alpha 当成绕 z 轴换算，回放时用 legacyGyroToBody 改正。
+   */
+  gyroAxes?: 'xyz';
   markers: ImuMarker[];
 }
 
@@ -98,6 +104,7 @@ export class ImuRecorder {
       note,
       reports: this.reports,
       samples: this.samples.length ? this.samples : undefined,
+      gyroAxes: this.source === 'phone' ? 'xyz' : undefined,
       markers: this.markers,
     };
   }
@@ -113,10 +120,10 @@ export function replayRecording(rec: ImuRecording, events: JoyConStreamEvents): 
     const bytes = fromHex(hex);
     stream.handleReport(id, new DataView(bytes.buffer), arrival);
   }
+  const legacy = rec.gyroAxes !== 'xyz';
   for (const [t, gx, gy, gz, ax, ay, az] of rec.samples ?? []) {
-    events.onSamples?.([
-      { t, gyro: { x: gx, y: gy, z: gz }, accel: { x: ax, y: ay, z: az }, clipped: false },
-    ]);
+    const [x, y, z] = legacy ? legacyGyroToBody([gx, gy, gz]) : [gx, gy, gz];
+    events.onSamples?.([{ t, gyro: { x, y, z }, accel: { x: ax, y: ay, z: az }, clipped: false }]);
   }
   return stream;
 }

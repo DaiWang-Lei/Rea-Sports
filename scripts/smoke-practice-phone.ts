@@ -49,6 +49,7 @@ send({
   hz: 60,
   canVibrate: false,
   hasGyro: true,
+  gyroAxes: 'xyz',
 });
 
 // 机体系：屏幕朝上平放、顶端指向电视 → 加速度 (0,0,1)，绕竖直轴的转动 = 机体 z

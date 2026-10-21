@@ -39,6 +39,11 @@ export interface PhoneMetaMsg {
   canVibrate: boolean;
   /** 有没有陀螺仪 */
   hasGyro: boolean;
+  /**
+   * 角速度按哪种轴约定换算：'xyz' = alpha/beta/gamma 是绕手机 x/y/z（现行规范，见 phoneToBody）。
+   * 2026-10 之前的手机页没有这个字段，当时按 z/x/y 换算，电脑端收到后会改正（见 legacyGyroToBody）。
+   */
+  gyroAxes?: 'xyz';
 }
 
 export interface PhonePongMsg {
@@ -65,7 +70,10 @@ export const STANDARD_GRAVITY = 9.80665;
 
 /**
  * W3C devicemotion → 机体系。
- * rotationRate：alpha 绕 z、beta 绕 x、gamma 绕 y（度/秒）；accelerationIncludingGravity：米/秒²。
+ * rotationRate：alpha / beta / gamma 分别是绕手机 x / y / z 轴的角速度（度/秒）。现行规范、iOS Safari（WebKit）
+ * 和安卓 Chrome 都是这样；MDN 上「alpha 绕 z、beta 绕 x、gamma 绕 y」是旧说法，按它换算会让陀螺仪和
+ * 加速度计的轴对不上（真机录制里握法一变，正手就被判成反手）。
+ * accelerationIncludingGravity：米/秒²，符号见 AccelSignDetector。
  */
 export function phoneToBody(
   rr: { alpha: number; beta: number; gamma: number },
@@ -73,15 +81,23 @@ export function phoneToBody(
   accelSign: 1 | -1
 ): { gyro: Vec3; accel: Vec3 } {
   // 手机系
-  const gx = rr.beta;
-  const gy = rr.gamma;
-  const gz = rr.alpha;
+  const gx = rr.alpha;
+  const gy = rr.beta;
+  const gz = rr.gamma;
   const k = accelSign / STANDARD_GRAVITY;
   const ax = acc.x * k;
   const ay = acc.y * k;
   const az = acc.z * k;
   // 机体系：X = 手机 y，Y = −手机 x，Z = 手机 z（绕 z 轴转 90°，仍是右手系）
   return { gyro: vec3(gy, -gx, gz), accel: vec3(ay, -ax, az) };
+}
+
+/**
+ * 旧版手机页（按 alpha 绕 z、beta 绕 x、gamma 绕 y 换算）发来的机体系角速度 → 正确的机体系角速度。
+ * 旧换算得到 (gamma, −beta, alpha)，正确的是 (beta, −alpha, gamma)。录制文件迁移也用这个。
+ */
+export function legacyGyroToBody(g: [number, number, number]): [number, number, number] {
+  return [-g[1], -g[2], g[0]];
 }
 
 /**

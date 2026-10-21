@@ -22,6 +22,7 @@ import type { RumblePulse } from '../joycon/rumble';
 import type { ImuSample } from '../types';
 import {
   type GameToPhoneMessage,
+  legacyGyroToBody,
   type PhoneButton,
   type PhoneMessage,
   type PhoneMetaMsg,
@@ -58,6 +59,8 @@ export class PhoneDevice {
   private readonly clock = new OffsetClock();
   private lastSeq = -1;
   private lastT = -Infinity;
+  /** 旧版手机页（meta 里没有 gyroAxes）：角速度轴要在这边改正。收到第一条 meta 之前按新版处理 */
+  private legacyAxes = false;
 
   constructor(
     readonly id: string,
@@ -80,9 +83,10 @@ export class PhoneDevice {
         this.lastT = t;
         this.samples++;
         this.lastSampleAt = arrival;
+        const g = this.legacyAxes ? legacyGyroToBody(msg.g) : msg.g;
         const s: ImuSample = {
           t,
-          gyro: { x: msg.g[0], y: msg.g[1], z: msg.g[2] },
+          gyro: { x: g[0], y: g[1], z: g[2] },
           accel: { x: msg.a[0], y: msg.a[1], z: msg.a[2] },
           clipped: false,
         };
@@ -93,10 +97,16 @@ export class PhoneDevice {
         this.buttons[msg.name] = msg.down;
         this.events.onButton?.(msg.name, msg.down);
         break;
-      case 'meta':
+      case 'meta': {
+        const legacy = msg.gyroAxes !== 'xyz';
+        if (legacy && !this.legacyAxes) {
+          this.events.onLog?.('手机上是旧版页面：已在电脑端改正陀螺仪轴向，建议在手机上刷新页面');
+        }
+        this.legacyAxes = legacy;
         this.meta = msg;
         this.events.onMeta?.(msg);
         break;
+      }
       case 'pong':
         this.rttMs = performance.now() - msg.t;
         break;
@@ -110,6 +120,7 @@ export class PhoneDevice {
     this.clock.reset();
     this.lastT = -Infinity;
     this.lastSeq = -1;
+    this.legacyAxes = false; // 刷新后可能换成了新版页面，等它的 meta
   }
 
   ping(): void {

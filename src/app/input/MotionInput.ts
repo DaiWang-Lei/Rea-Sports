@@ -71,7 +71,14 @@ export interface MotionInputEvents {
   onLinkStatus?: (text: string, ok: boolean) => void;
 }
 
-const GRIP_KEY = 'rea-grip-';
+/**
+ * 握法的存储键。手机的握法在 2026-10-21 之前是按接错的陀螺轴算出来的（见 phoneToBody），
+ * 换个键名让旧数据失效，回到需要重新做「准备姿势」
+ */
+const GRIP_KEYS: Record<DeviceKind, string> = {
+  joycon: 'rea-grip-joycon',
+  phone: 'rea-grip-phone-xyz',
+};
 const HANDED_KEY = 'rea-handed';
 
 function loadJson<T>(key: string): T | null {
@@ -179,7 +186,7 @@ export class MotionInput {
     const d = this.active;
     if (!d || !d.paddle.setReady()) return false;
     const data = d.paddle.saveGrip();
-    if (data) saveJson(GRIP_KEY + d.kind, data);
+    if (data) saveJson(GRIP_KEYS[d.kind], data);
     return true;
   }
 
@@ -188,7 +195,7 @@ export class MotionInput {
   private newDevice(key: string, kind: DeviceKind, name: string): InputDevice {
     const paddle = new PaddleModel();
     paddle.handed = this.handed;
-    paddle.loadGrip(loadJson<PaddleCalibrationData>(GRIP_KEY + kind));
+    paddle.loadGrip(loadJson<PaddleCalibrationData>(GRIP_KEYS[kind]));
     const d: InputDevice = {
       key,
       kind,
