@@ -51,6 +51,51 @@ describe('发球机练习', () => {
     expect(reports.every((r) => r.result === 'missed')).toBe(true);
   });
 
+  it('快的引拍不会抢走这一球：引拍在理想时刻前 0.3 秒、前挥晚 60ms，照样回进', () => {
+    const sim = new FeederSim({ seed: 21, level: 1 });
+    const reports: ShotReport[] = [];
+    let id = 1;
+    let stage = 0;
+    let forBall = -1;
+    while (sim.stats.feeds < 12 || sim.phase.kind !== 'wait') {
+      sim.tick();
+      for (const e of sim.drainEvents()) if (e.type === 'result') reports.push(e.report);
+      const plan = sim.plan;
+      if (!plan || sim.phase.kind !== 'incoming') continue;
+      if (forBall !== sim.stats.feeds) {
+        forBall = sim.stats.feeds;
+        stage = 0;
+      }
+      const rel = (plan.p.x - sim.player.mover.x) * forehandSign(sim.player);
+      const fh = rel > -0.15 ? 1 : -1;
+      const tc = plan.t + 0.06;
+      const swingAt = (dir: 1 | -1, wPeak: number, contact: number) =>
+        sim.swing({
+          id,
+          motion: id++,
+          path: 'fast',
+          tDetect: sim.t,
+          tContact: contact,
+          dir,
+          yawFrac: 0.9,
+          wPeak,
+          features: NO_FEATURES,
+        });
+      // 引拍（与前挥反方向）在前挥前 0.3 秒，速度够快
+      if (stage === 0 && sim.t >= tc - 0.076 - 0.3) {
+        stage = 1;
+        swingAt(-fh as 1 | -1, 13, sim.t + 0.076);
+      } else if (stage === 1 && sim.t >= tc - 0.076) {
+        stage = 2;
+        swingAt(fh as 1 | -1, 20, tc);
+      }
+      if (sim.t > 1000) throw new Error('练习没有正常推进');
+    }
+    const early = reports.filter((r) => r.result === 'early' || r.result === 'volley').length;
+    expect(early).toBe(0);
+    expect(reports.filter((r) => r.result === 'in').length).toBeGreaterThanOrEqual(10);
+  });
+
   it('同一种子结果完全一样', () => {
     const a = play(2, 40, 30, 5).reports.map((r) => `${r.result}:${r.timingMs}`);
     const b = play(2, 40, 30, 5).reports.map((r) => `${r.result}:${r.timingMs}`);

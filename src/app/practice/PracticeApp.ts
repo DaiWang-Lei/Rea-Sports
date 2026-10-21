@@ -9,7 +9,8 @@ import { tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
 import { rotate } from '@/core/quat';
 import { normalize, type Vec3, vec3 } from '@/core/vec3';
-import { NO_FEATURES, type SwingInput } from '@/sim/hit/HitResolver';
+import type { SwingCommit } from '@/input/paddle/SwingDetector';
+import { NO_FEATURES, type SwingInput, type SwingOutcome } from '@/sim/hit/HitResolver';
 import { SIM_DT, TABLE } from '@/sim/constants';
 import { forehandSign } from '@/sim/players/PlayerSim';
 import {
@@ -19,12 +20,23 @@ import {
   type FeedLevel,
   type FeedZone,
   type ShotReport,
+  type WhiffReason,
 } from '@/sim/practice/FeederSim';
 import { SHOT_KIND_TEXT } from '@/sim/shot/ShotSpec';
 import { cpuPaddle, type PaddlePose } from '@/render/paddlePose';
 import { Renderer } from '@/render/Renderer';
 import { Hud } from '@/ui/Hud';
 import { type InputDevice, MotionInput } from '../input/MotionInput';
+import {
+  commitLog,
+  downloadJson,
+  type PracticeSettingsLog,
+  PracticeRecorder,
+  q4,
+  RECORD_MAX_BALLS,
+  RECORD_MAX_MS,
+  v3,
+} from './PracticeRecorder';
 
 interface Settings {
   level: FeedLevel;
@@ -62,6 +74,11 @@ type Step = 'connect' | 'recenter' | 'ready' | 'play';
 
 const LEVEL_TEXT: Record<FeedLevel, string> = { 1: '入门', 2: '进阶', 3: '高手' };
 const ZONE_TEXT: Record<FeedZone, string> = { mixed: '全台', fh: '只送正手', bh: '只送反手' };
+const WHIFF_TEXT: Record<WhiffReason, string> = {
+  early: '挥早了',
+  late: '挥晚了',
+  reach: '够不着',
+};
 const SPIN_TEXT: Record<string, string> = {
   flat: '平送',
   top: '上旋',
@@ -89,6 +106,12 @@ export class PracticeApp {
   private prevBody = { x: 0, y: -2 };
   private prevBall: Vec3 = vec3();
   private keyId = 1_000_000;
+
+  // 「录制这局」
+  private rec: PracticeRecorder | null = null;
+  private lastClockLog = 0;
+  private lastPoseLog = 0;
+  private lastPlan: object | null = null;
 
   // DOM
   private readonly overlay: HTMLDivElement;
@@ -125,8 +148,24 @@ export class PracticeApp {
 
     this.input.events = {
       onSwing: (e) => this.onDeviceSwing(e),
-      onPeak: (e) => this.sim.refineSwing(e.peak.id, e.peak.w, e.features),
+      onPeak: (e) => {
+        this.sim.refineSwing(e.peak.id, e.peak.w, e.features);
+        this.rec?.push({
+          k: 'peak',
+          rt: performance.now(),
+          id: e.peak.id,
+          t: e.peak.t,
+          w: e.peak.w,
+          features: e.features,
+        });
+      },
       onButton: (b, down) => down && this.onButton(b),
+      onRawReport: (d, id, data, arrival) => {
+        if (this.rec?.device === d) this.rec.imu.addReport(id, data, arrival);
+      },
+      onRawSample: (d, sample) => {
+        if (this.rec?.device === d) this.rec.imu.addSample(sample);
+      },
       onDevicesChanged: () => this.renderOverlay(),
       onLinkStatus: (text, ok) => {
         this.linkStatus = { text, ok };
@@ -209,7 +248,11 @@ export class PracticeApp {
     // 仿真时间 clockSim 对应的真实时刻
     this.clockSim = this.sim.t;
     this.clockReal = now - this.acc * 1000;
-    for (const e of this.sim.drainEvents()) this.onSimEvent(e);
+    for (const e of this.sim.drainEvents()) {
+      this.onSimEvent(e);
+      this.rec?.push({ k: 'sim', rt: now, st: this.sim.t, e });
+    }
+    if (this.rec) this.recTick(now);
     this.updateStance();
     this.draw();
     this.updateStatus(now);
@@ -296,16 +339,13 @@ export class PracticeApp {
       wPeak: c.wPeak,
       features: e.features,
     };
-    this.applySwing(sw);
+    this.applySwing(sw, c);
   }
 
-  private applySwing(sw: SwingInput): void {
+  private applySwing(sw: SwingInput, commit: SwingCommit | null): void {
+    // 挥空、未落台的提示在判定算数时由 whiff / volley 事件给出（挥早会先挂起一小会儿，可能被前挥取代）
     const out = this.sim.swing(sw);
-    if (out.type === 'whiff') {
-      this.hud.flash(out.reason === 'early' ? '挥早了' : '挥晚了', '', 0.9, 'bad');
-    } else if (out.type === 'volley') {
-      this.hud.flash('未落台击球', '球还没在你这边弹起', 1.4, 'bad');
-    }
+    this.logSwing(sw, out, commit);
   }
 
   private onKey(e: KeyboardEvent): void {
@@ -324,23 +364,32 @@ export class PracticeApp {
       const brush = this.keysDown.has('w') ? 0.7 : this.keysDown.has('s') ? -0.7 : 0;
       const w = e.shiftKey ? 22 : 15;
       this.showSwing(dir, w, 'key');
-      this.applySwing({
-        id: this.keyId,
-        motion: this.keyId++,
-        path: 'key',
-        tDetect: this.simAt(now),
-        tContact: this.simAt(now) - this.settings.latencyMs / 1000,
-        dir,
-        yawFrac: 1,
-        wPeak: w,
-        features: { ...NO_FEATURES, brush },
-      });
+      this.applySwing(
+        {
+          id: this.keyId,
+          motion: this.keyId++,
+          path: 'key',
+          tDetect: this.simAt(now),
+          tContact: this.simAt(now) - this.settings.latencyMs / 1000,
+          dir,
+          yawFrac: 1,
+          wPeak: w,
+          features: { ...NO_FEATURES, brush },
+        },
+        null
+      );
     }
   }
 
   private readonly keysDown = new Set<string>();
 
   private onButton(b: string): void {
+    this.rec?.push({ k: 'button', rt: performance.now(), name: b });
+    this.handleButton(b);
+    this.logCalib();
+  }
+
+  private handleButton(b: string): void {
     this.sfx.unlock();
     if (b === 'pause') {
       if (this.step === 'play') this.togglePause();
@@ -392,13 +441,132 @@ export class PracticeApp {
     if (this.step !== 'play') return;
     this.paused = !this.paused;
     this.sim.pause(this.paused);
+    this.rec?.push({ k: 'pause', rt: performance.now(), paused: this.paused });
     this.renderPause();
   }
 
   private restartSim(): void {
     this.sim = this.makeSim();
     if (this.step === 'play' && !this.paused) this.sim.pause(false);
+    this.rec?.push({ k: 'settings', rt: performance.now(), settings: this.settingsLog() });
+    this.lastPlan = null;
     this.renderStats();
+  }
+
+  // ---------------------------------------------------------------- 录制这局
+
+  private settingsLog(): PracticeSettingsLog {
+    const s = this.settings;
+    const cfg = this.sim.resolver.cfg;
+    return {
+      level: s.level,
+      zone: s.zone,
+      leniency: s.leniency,
+      latencyMs: s.latencyMs,
+      windowMs: this.sim.windowMs,
+      handed: this.input.handed,
+      tauMin: cfg.tauMin,
+      tauMax: cfg.tauMax,
+      holdEarly: cfg.holdEarly,
+    };
+  }
+
+  private startRecording(): void {
+    this.rec = new PracticeRecorder(this.keyboard ? null : this.input.active, this.settingsLog());
+    this.lastClockLog = 0;
+    this.lastPoseLog = 0;
+    this.lastPlan = null;
+    this.logCalib();
+    this.rec.push({ k: 'pause', rt: performance.now(), paused: this.paused });
+  }
+
+  private stopRecording(auto = false): void {
+    const rec = this.rec;
+    if (!rec) return;
+    this.rec = null;
+    const data = rec.finish();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const who = rec.log.deviceKind === 'joycon' ? data.side : rec.log.deviceKind;
+    downloadJson(data, `practice-${who}-${stamp}.json`);
+    this.hud.flash(auto ? '录制结束，已下载' : '录制已下载', `${rec.results} 球`, 1.6, 'good');
+    if (this.paused) this.renderPause();
+  }
+
+  private logCalib(): void {
+    const rec = this.rec;
+    const d = rec?.device;
+    if (!rec || !d) return;
+    const g = d.paddle.grip;
+    rec.push({
+      k: 'calib',
+      rt: performance.now(),
+      hasHeading: d.paddle.hasHeading,
+      yaw: d.paddle.yaw,
+      grip: g ? q4(g) : null,
+      handed: d.paddle.handed,
+    });
+  }
+
+  private logSwing(input: SwingInput, outcome: SwingOutcome, commit: SwingCommit | null): void {
+    const rec = this.rec;
+    if (!rec) return;
+    const p = this.sim.player;
+    const paddle = this.input.active?.paddle;
+    const face = this.keyboard ? null : (paddle?.faceNormal() ?? null);
+    const blade = this.keyboard ? null : (paddle?.bladeUp() ?? null);
+    rec.push({
+      k: 'swing',
+      rt: performance.now(),
+      st: this.sim.t,
+      commit: commit ? commitLog(commit) : null,
+      input,
+      outcome,
+      stance: p.stance,
+      stanceHint: this.sim.stanceHint,
+      body: [p.mover.x, p.mover.y],
+      face: face ? v3(face) : null,
+      blade: blade ? v3(blade) : null,
+    });
+  }
+
+  /** 每帧：时钟对应、理想击球点变化、姿态采样（约 10 次/秒），到量自动停止 */
+  private recTick(now: number): void {
+    const rec = this.rec!;
+    if (now - this.lastClockLog >= 1000) {
+      this.lastClockLog = now;
+      rec.push({ k: 'clock', rt: this.clockReal, st: this.clockSim });
+    }
+    const plan = this.sim.plan;
+    if (plan && plan !== this.lastPlan) {
+      this.lastPlan = plan;
+      rec.push({
+        k: 'plan',
+        rt: now,
+        st: this.sim.t,
+        t: plan.t,
+        bounceT: plan.bounceT,
+        p: v3(plan.p),
+        v: v3(plan.v),
+        popup: plan.popup,
+      });
+    }
+    const d = rec.device;
+    if (d && now - this.lastPoseLog >= 100) {
+      this.lastPoseLog = now;
+      const f = d.paddle.faceNormal();
+      const b = d.paddle.bladeUp();
+      rec.push({
+        k: 'pose',
+        rt: now,
+        q: q4(d.paddle.q),
+        face: f ? v3(f) : null,
+        blade: b ? v3(b) : null,
+      });
+    }
+    const gone = d !== null && !this.input.devices.has(d.key);
+    if (gone || rec.results >= RECORD_MAX_BALLS || rec.elapsedMs >= RECORD_MAX_MS) {
+      this.stopRecording(true);
+    }
   }
 
   // ---------------------------------------------------------------- 仿真事件
@@ -414,6 +582,12 @@ export class PracticeApp {
         this.input.rumble(e.smash ? 'smash' : e.oops ? 'oops' : 'hit');
         if (e.oops) this.hud.flash('哎呀!', '', 0.9, 'bad');
         if (e.smash) this.hud.flash('扣杀!', '', 0.9, 'big');
+        break;
+      case 'whiff':
+        this.hud.flash(WHIFF_TEXT[e.reason], '', 0.9, 'bad');
+        break;
+      case 'volley':
+        this.hud.flash('未落台击球', '球还没在你这边弹起', 1.4, 'bad');
         break;
       case 'bounce':
         this.sfx.table(e.impact, pan(e.p));
@@ -435,7 +609,13 @@ export class PracticeApp {
 
   private showResult(r: ShotReport): void {
     const good = r.result === 'in';
-    if (!good && r.result !== 'early' && r.result !== 'late' && r.result !== 'volley') {
+    if (
+      !good &&
+      r.result !== 'early' &&
+      r.result !== 'late' &&
+      r.result !== 'reach' &&
+      r.result !== 'volley'
+    ) {
       this.hud.flash(FEED_RESULT_TEXT[r.result], '', 1.0, 'bad');
     } else if (good) {
       this.hud.flash('好球!', '', 0.7, 'good');
@@ -497,7 +677,11 @@ export class PracticeApp {
       : d
         ? `${d.name}${this.input.streaming ? '' : '（没有数据）'}${d.paddle.calibrated ? '' : ' · 未校准拍面'}`
         : '没有连接体感设备';
-    this.statusEl.innerHTML = `${dev}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.settings.latencyMs}ms</span>`;
+    const rec = this.rec;
+    const recText = rec
+      ? `<br/><span class="pr-rec">● 录制中 · 已录 ${rec.results} / ${RECORD_MAX_BALLS} 球 · ${Math.floor(rec.elapsedMs / 60000)}:${String(Math.floor(rec.elapsedMs / 1000) % 60).padStart(2, '0')}</span>`
+      : '';
+    this.statusEl.innerHTML = `${dev}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.settings.latencyMs}ms</span>${recText}`;
   }
 
   private lastStatus = 0;
@@ -606,6 +790,10 @@ export class PracticeApp {
           ${med === null ? '<span class="dim">（打满 5 球后可以按平均时机自动校准）</span>' : `<button data-act="autolat">按我的平均时机校准（${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms）</button>`}
         </div>
         <div class="pr-setting"><span>持拍手</span>${opt('handed', 1, this.input.handed, '右手')}${opt('handed', -1, this.input.handed, '左手')}</div>
+        <div class="pr-setting"><span>录制这局</span>
+          ${this.rec ? `<button class="on" data-act="rec-stop">停止并下载（已录 ${this.rec.results} 球）</button>` : '<button data-act="rec-start">开始录制</button>'}
+          <span class="dim">打满 ${RECORD_MAX_BALLS} 球或 ${RECORD_MAX_MS / 60000} 分钟自动停止并下载，把文件发给开发者分析</span>
+        </div>
         <div class="pr-actions">
           <button class="primary" data-act="resume">继续练习</button>
           <button data-act="recal">重新校准拍面</button>
@@ -645,6 +833,14 @@ export class PracticeApp {
         this.sim.stats.timings.length = 0;
         this.renderPause();
       }
+    });
+    p.querySelector('[data-act="rec-start"]')?.addEventListener('click', () => {
+      this.startRecording();
+      this.renderPause();
+    });
+    p.querySelector('[data-act="rec-stop"]')?.addEventListener('click', () => {
+      this.stopRecording();
+      this.renderPause();
     });
     p.querySelector('[data-act="resume"]')?.addEventListener('click', () => this.togglePause());
     p.querySelector('[data-act="recal"]')?.addEventListener('click', () => {

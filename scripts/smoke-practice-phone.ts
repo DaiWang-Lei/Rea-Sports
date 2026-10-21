@@ -2,13 +2,15 @@
  * 手机 → 发球机练习 端到端冒烟测试（需要先 pnpm dev，走本地中转）：
  * 用 Node 模拟一台手机（屏幕朝上、顶端指向电视），按「回中」「确认」完成校准，
  * 然后在理想击球时刻附近合成一次正手挥拍（绕竖直轴逆时针转动），检查回球结果。
- * 用法：pnpm smoke:practice-phone [截图路径]
+ * 同时测「录制这局」：暂停菜单里开始录制，打完后停止并下载，存到第二个参数给的路径。
+ * 用法：pnpm smoke:practice-phone [截图路径] [录制文件路径]
  */
 import { chromium } from 'playwright-core';
 import WebSocket from 'ws';
 
 const BASE = process.env.BASE ?? 'https://localhost:5288';
 const shot = process.argv[2] ?? 'smoke-practice-phone.png';
+const recOut = process.argv[3] ?? 'smoke-practice-record.json';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const browser = await chromium.launch({
@@ -93,6 +95,13 @@ if ((await state()).step === 'ready') {
 }
 console.log(`校准后步骤：${(await state()).step}`);
 
+// 暂停 → 开始录制 → 继续
+await page.keyboard.press('Escape');
+await sleep(200);
+await page.click('[data-act="rec-start"]');
+await page.click('[data-act="resume"]');
+console.log(`录制：${(await page.locator('.pr-status').innerText()).split('\n').pop()}`);
+
 /** 合成一次正手：0.2 秒内角速度升到 20 rad/s 再回落；dir = +1 逆时针 */
 async function forehand(dir: 1 | -1) {
   const prof = [2, 5, 9, 13, 17, 20, 18, 13, 8, 4, 1, 0];
@@ -126,6 +135,15 @@ while (Date.now() - t0 < 40000) {
   }
   await sleep(5);
 }
+// 暂停 → 停止并下载
+await page.keyboard.press('Escape');
+await sleep(200);
+const [dl] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('[data-act="rec-stop"]'),
+]);
+await dl.saveAs(recOut);
+console.log(`录制文件：${recOut}（${dl.suggestedFilename()}）`);
 const s = await state();
 await page.screenshot({ path: shot });
 console.log(`送球 ${s.feeds}，结果：${JSON.stringify(s.results)}`);

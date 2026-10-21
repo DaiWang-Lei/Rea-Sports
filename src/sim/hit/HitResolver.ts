@@ -6,7 +6,9 @@
  *  - 很早（τ < −3.5）的动作当作准备动作，忽略；慢挥拍偏早也忽略（多半是引拍）；
  *  - 球还没在本方台面弹起、且就在弹起前 100ms 内挥中 → 未落台击球（犯规）；
  *  - τ ∈ [τmin, τmax] 击中；偏早 / 偏晚 → 挥空；
- *  - 同一个动作里，后来的、更快的反向挥拍可以取代还没执行的击球（引拍被误认成挥拍时）。
+ *  - 同一个动作里，后来的、更快的反向挥拍可以取代还没执行的击球（引拍被误认成挥拍时）；
+ *  - 挥早 / 未落台先挂起 holdEarly 秒再算数：期间来一下反方向、更快的挥拍，就把前面那下当引拍丢掉。
+ *    引拍挥得快（≥ 快速确认阈值）时，它比真正的击球早 0.3–0.45 秒，人一打晚就正好落进「挥早」区间。
  * 击中后在 max(T_ideal, 确认时刻) 执行，球在理想击球点被打出（与 WSR 一样不需要真的把拍子对准球）。
  *
  * 映射（见计划附录）：时机 → 左右（早打斜线）、峰值角速度 → 球速、拍面俯仰 / 翻腕 / 刷球方向 → 上下旋、
@@ -64,10 +66,15 @@ export interface AttemptBall {
   smash: boolean;
 }
 
+export type MissOutcome =
+  | { type: 'whiff'; reason: 'early' | 'late'; tau: number; stroke: Stroke }
+  | { type: 'volley'; tau: number; stroke: Stroke };
+
 export type SwingOutcome =
   | { type: 'ignore' }
-  | { type: 'whiff'; reason: 'early' | 'late'; tau: number; stroke: Stroke }
-  | { type: 'volley'; tau: number; stroke: Stroke }
+  | MissOutcome
+  /** 挥早 / 未落台，先挂起到 until（见 dueHeld）；期间可能被反方向更快的挥拍取代 */
+  | { type: 'held'; miss: MissOutcome; until: number }
   | { type: 'hit'; tau: number; stroke: Stroke; execAt: number };
 
 export interface PendingHit {
@@ -75,6 +82,12 @@ export interface PendingHit {
   stroke: Stroke;
   tau: number;
   execAt: number;
+}
+
+interface HeldMiss {
+  swing: SwingInput;
+  miss: MissOutcome;
+  until: number;
 }
 
 export interface ResolverConfig {
@@ -90,6 +103,8 @@ export interface ResolverConfig {
   supersedeWithin: number;
   /** 比落台早这么一点点（秒）不算未落台击球，按刚弹起时击中处理 */
   bounceGrace: number;
+  /** 挥早 / 未落台挂起多久（秒）才算数 */
+  holdEarly: number;
 }
 
 export function resolverConfig(tune: Tuning, windowMs: number): ResolverConfig {
@@ -101,6 +116,7 @@ export function resolverConfig(tune: Tuning, windowMs: number): ResolverConfig {
     gentleHold: 0.05,
     supersedeWithin: 0.3,
     bounceGrace: 0.02,
+    holdEarly: 0.45,
   };
 }
 
@@ -110,6 +126,7 @@ export function resolverConfig(tune: Tuning, windowMs: number): ResolverConfig {
 export class HitResolver {
   ball: AttemptBall | null = null;
   pending: PendingHit | null = null;
+  held: HeldMiss | null = null;
   /** 这个来球已经出手过（击中 / 挥空 / 犯规） */
   attempted = false;
   /** 没有明确方向时用的站位（由上层按球拍朝向或来球位置更新） */
@@ -120,6 +137,7 @@ export class HitResolver {
   begin(ball: AttemptBall): void {
     this.ball = ball;
     this.pending = null;
+    this.held = null;
     this.attempted = false;
   }
 
@@ -131,6 +149,7 @@ export class HitResolver {
   end(): void {
     this.ball = null;
     this.pending = null;
+    this.held = null;
   }
 
   strokeOf(sw: SwingInput): Stroke {
@@ -145,6 +164,17 @@ export class HitResolver {
     const plan = ball.plan;
     const tau = (sw.tContact - plan.t) / c.window;
     const stroke = this.strokeOf(sw);
+
+    // 挂起的挥早 / 未落台：反方向、更快的挥拍把它当引拍取代（不要求同一动作：引拍和前挥之间常有停顿）
+    const h = this.held;
+    if (h) {
+      const replaces =
+        sw.dir !== h.swing.dir &&
+        sw.wPeak > h.swing.wPeak &&
+        sw.tDetect - h.swing.tDetect <= c.holdEarly;
+      if (!replaces) return { type: 'ignore' };
+      this.held = null;
+    }
 
     // 取代还没执行的击球（同一动作里的更快反向挥拍）
     const p = this.pending;
@@ -164,17 +194,14 @@ export class HitResolver {
     if (sw.tContact < plan.bounceT - c.bounceGrace) {
       // 还没落台：弹起前 100ms 内又挥得够快 → 未落台击球；更早算挥早（慢挥拍多半是引拍，忽略）
       if (strong && sw.tContact >= plan.bounceT - 0.1 && sw.wPeak >= 7) {
-        this.attempted = true;
-        return { type: 'volley', tau, stroke };
+        return this.hold(sw, { type: 'volley', tau, stroke });
       }
       if (!strong) return { type: 'ignore' };
-      this.attempted = true;
-      return { type: 'whiff', reason: 'early', tau, stroke };
+      return this.hold(sw, { type: 'whiff', reason: 'early', tau, stroke });
     }
     if (tau < c.tauMin) {
       if (!strong) return { type: 'ignore' };
-      this.attempted = true;
-      return { type: 'whiff', reason: 'early', tau, stroke };
+      return this.hold(sw, { type: 'whiff', reason: 'early', tau, stroke });
     }
     if (tau > c.tauMax) {
       this.attempted = true;
@@ -183,6 +210,21 @@ export class HitResolver {
     const execAt = Math.max(plan.t, sw.tDetect + (sw.path === 'gentle' ? c.gentleHold : 0));
     this.pending = { swing: sw, stroke, tau, execAt };
     return { type: 'hit', tau, stroke, execAt };
+  }
+
+  private hold(sw: SwingInput, miss: MissOutcome): SwingOutcome {
+    const until = sw.tDetect + this.cfg.holdEarly;
+    this.held = { swing: sw, miss, until };
+    return { type: 'held', miss, until };
+  }
+
+  /** 挂起到期（now ≥ until，或 force：球已经死了）的挥早 / 未落台：取出并标记已出手 */
+  dueHeld(now: number, force = false): MissOutcome | null {
+    const h = this.held;
+    if (!h || (!force && now < h.until)) return null;
+    this.held = null;
+    this.attempted = true;
+    return h.miss;
   }
 
   /** 峰值细化：更新还没执行的击球的峰值与拍面特征 */

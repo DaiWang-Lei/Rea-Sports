@@ -69,6 +69,10 @@ export interface MotionInputEvents {
   onButton?: (b: LogicalButton, down: boolean, device: InputDevice) => void;
   onDevicesChanged?: () => void;
   onLinkStatus?: (text: string, ok: boolean) => void;
+  /** 录制用：Joy-Con 的原始输入报告 */
+  onRawReport?: (device: InputDevice, reportId: number, data: Uint8Array, arrival: number) => void;
+  /** 录制用：手机样本（已换算到机体系） */
+  onRawSample?: (device: InputDevice, sample: ImuSample) => void;
 }
 
 /**
@@ -235,6 +239,7 @@ export class MotionInput {
     d.joycon = driver;
     driver.events = {
       onSamples: (s) => this.onSamples(d, s),
+      onRawReport: (id, data, arrival) => this.events.onRawReport?.(d, id, data, arrival),
       onButtons: (b, prev) => {
         for (const name of ['confirm', 'back', 'recenter', 'pause'] as LogicalButton[]) {
           const now = isLogicalDown(driver.side, b, name);
@@ -281,6 +286,7 @@ export class MotionInput {
 
   private onSamples(d: InputDevice, samples: ImuSample[]): void {
     for (const s of samples) {
+      if (d.kind === 'phone') this.events.onRawSample?.(d, s);
       const f = d.motion.process(s);
       d.paddle.update(f);
       d.samples++;

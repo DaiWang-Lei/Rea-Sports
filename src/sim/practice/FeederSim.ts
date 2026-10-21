@@ -1,6 +1,6 @@
 /**
  * 发球机练习（纯逻辑，固定 240Hz 步长）：远端的发球机按难度送球到近端，玩家挥拍回球，
- * 统计每一球的结果（回进 / 出界 / 下网 / 没接到 / 挥早 / 挥晚 / 未落台击球）和时机偏差。
+ * 统计每一球的结果（回进 / 出界 / 下网 / 没接到 / 挥早 / 挥晚 / 够不着 / 未落台击球）和时机偏差。
  */
 import { createTuning, type Tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
@@ -12,6 +12,7 @@ import { type ContactPlan, planContact } from '../hit/contactZone';
 import {
   HitResolver,
   mapSwing,
+  type MissOutcome,
   resolverConfig,
   type SwingFeatures,
   type SwingInput,
@@ -46,7 +47,11 @@ export interface FeederOptions {
   interval?: number;
 }
 
-export type FeedResult = 'in' | 'out' | 'net' | 'own' | 'missed' | 'early' | 'late' | 'volley';
+export type FeedResult =
+  'in' | 'out' | 'net' | 'own' | 'missed' | 'early' | 'late' | 'reach' | 'volley';
+
+/** 挥空的原因：时机太早 / 太晚，或者时机在窗口里但站位离得太远够不着 */
+export type WhiffReason = 'early' | 'late' | 'reach';
 
 export const FEED_RESULT_TEXT: Record<FeedResult, string> = {
   in: '回进了',
@@ -56,6 +61,7 @@ export const FEED_RESULT_TEXT: Record<FeedResult, string> = {
   missed: '没接到',
   early: '挥早了',
   late: '挥晚了',
+  reach: '够不着',
   volley: '未落台击球',
 };
 
@@ -93,8 +99,18 @@ export type FeederEvent =
       timingMs: number;
       power: number;
       spin: number;
+      /** 站位误差（米）：> 0.2 哎呀，> 0.45 够不着 */
+      reach: number;
     }
-  | { type: 'whiff'; t: number; reason: 'early' | 'late'; timingMs: number; stroke: Stroke }
+  | {
+      type: 'whiff';
+      t: number;
+      reason: WhiffReason;
+      timingMs: number;
+      stroke: Stroke;
+      /** 够不着时的站位误差（米） */
+      reach?: number;
+    }
   | { type: 'volley'; t: number; timingMs: number }
   | { type: 'result'; t: number; report: ShotReport };
 
@@ -148,8 +164,7 @@ export class FeederSim {
   private readonly ballEvents: BallEvent[] = [];
   private bouncedNear = false;
   private netTouched = false;
-  private pendingWhiff: { reason: 'early' | 'late'; timingMs: number; stroke: Stroke } | null =
-    null;
+  private pendingWhiff: { reason: WhiffReason; timingMs: number; stroke: Stroke } | null = null;
   /** 站位提示（来自球拍朝向）；null = 按来球位置 */
   stanceHint: Stroke | null = null;
 
@@ -179,13 +194,12 @@ export class FeederSim {
 
   // ---------------------------------------------------------------- 外部输入
 
-  /** 玩家挥拍（时间已换算成仿真时间）。返回判定结果，供界面立即反馈 */
+  /** 玩家挥拍（时间已换算成仿真时间）。返回判定结果（挥空、未落台的提示走 whiff / volley 事件） */
   swing(sw: SwingInput): SwingOutcome {
     const out = this.resolver.onSwing(sw);
     const me = this.player;
     const plan = this.plan;
     if (out.type === 'ignore' || !plan) return out;
-    const timingMs = Math.round(out.tau * this.windowMs);
     if (out.type === 'hit') {
       me.swing = {
         start: this.t - 0.12,
@@ -197,32 +211,39 @@ export class FeederSim {
         contact: { ...plan.p },
       };
     } else {
+      // 挥空 / 未落台（包括先挂起的）：马上做挥空动作；挂起的到期后才算数（见 tick）
+      const miss = out.type === 'held' ? out.miss : out;
       me.swing = {
         start: this.t - 0.12,
         hit: sw.tContact,
         end: sw.tContact + 0.3,
-        stroke: out.stroke,
+        stroke: miss.stroke,
         height: TABLE.height + 0.15,
         kind: null,
         contact: { ...plan.p },
         whiff: true,
       };
-      if (out.type === 'volley') {
-        this.events.push({ type: 'volley', t: this.t, timingMs });
-        this.finish({ result: 'volley', timingMs, stroke: out.stroke });
-      } else {
-        this.events.push({
-          type: 'whiff',
-          t: this.t,
-          reason: out.reason,
-          timingMs,
-          stroke: out.stroke,
-        });
-        // 球继续飞，等它出界后再给结果
-        this.pendingWhiff = { reason: out.reason, timingMs, stroke: out.stroke };
-      }
+      if (out.type !== 'held') this.applyMiss(out);
     }
     return out;
+  }
+
+  /** 挥空 / 未落台算数：未落台立刻出结果；挥空等球飞出去再给结果 */
+  private applyMiss(miss: MissOutcome): void {
+    const timingMs = Math.round(miss.tau * this.windowMs);
+    if (miss.type === 'volley') {
+      this.events.push({ type: 'volley', t: this.t, timingMs });
+      this.finish({ result: 'volley', timingMs, stroke: miss.stroke });
+      return;
+    }
+    this.events.push({
+      type: 'whiff',
+      t: this.t,
+      reason: miss.reason,
+      timingMs,
+      stroke: miss.stroke,
+    });
+    this.pendingWhiff = { reason: miss.reason, timingMs, stroke: miss.stroke };
   }
 
   /** 峰值细化 */
@@ -250,6 +271,8 @@ export class FeederSim {
     // 到期的击球
     const due = this.resolver.due(this.t);
     if (due && this.phase.kind === 'incoming') this.executeHit(due.swing, due.stroke, due.tau);
+    const miss = this.resolver.dueHeld(this.t);
+    if (miss && this.phase.kind === 'incoming') this.applyMiss(miss);
 
     this.updateMover();
     this.player.mover.update(dt, this.player.limits);
@@ -401,10 +424,10 @@ export class FeederSim {
     const reachError = Math.hypot(Math.max(0, dx), 0.5 * (me.mover.y - ideal.y));
     const timingMs = Math.round(tau * this.windowMs);
     if (reachError > this.tune.mover.reachRushed) {
-      // 够不着：挥空
-      const reason = tau < 0 ? 'early' : 'late';
+      // 够不着：挥空（时机本身在窗口里，卡片上单独显示「够不着」）
+      const reason: WhiffReason = 'reach';
       this.pendingWhiff = { reason, timingMs, stroke };
-      this.events.push({ type: 'whiff', t: this.t, reason, timingMs, stroke });
+      this.events.push({ type: 'whiff', t: this.t, reason, timingMs, stroke, reach: reachError });
       if (me.swing) me.swing.whiff = true;
       return;
     }
@@ -460,6 +483,7 @@ export class FeederSim {
       timingMs,
       power: mapped.power,
       spin: mapped.spin,
+      reach: reachError,
     });
     this.phase = { kind: 'outgoing', since: this.t };
     this.plan = null;
@@ -520,6 +544,12 @@ export class FeederSim {
   /** 球死了（落地、飞远、第二跳、长时间没事件） */
   private onDead(): void {
     if (this.phase.kind === 'incoming') {
+      // 还挂着的挥早 / 未落台：球已经死了，立刻算数
+      const held = this.resolver.dueHeld(this.t, true);
+      if (held) {
+        this.applyMiss(held);
+        if (held.type === 'volley') return; // 已经出了结果
+      }
       const w = this.pendingWhiff;
       this.finish(
         w ? { result: w.reason, timingMs: w.timingMs, stroke: w.stroke } : { result: 'missed' }

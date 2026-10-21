@@ -56,6 +56,11 @@
   color: #7cf0b0;
 }
 
+.pr-rec {
+  color: #ff9a8a;
+  font-weight: 600;
+}
+
 .pr-card-title.bad {
   color: #ff9a8a;
 }

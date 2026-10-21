@@ -77,15 +77,60 @@ describe('击球判定', () => {
     expect(r.onSwing(swing({ path: 'gentle', tContact: 1.02 - 0.1 })).type).toBe('ignore');
     r = resolver();
     const early = r.onSwing(swing({ tContact: 1.12 - 0.25 }));
-    // 比落台还早 130ms → 挥早（弹起前 100ms 以外）
-    expect(early.type).toBe('whiff');
+    // 比落台还早 130ms → 挥早（弹起前 100ms 以外），先挂起 0.45 秒，没人取代就算数
+    expect(early.type === 'held' && early.miss.type === 'whiff' && early.miss.reason).toBe('early');
+    expect(r.dueHeld(1.05 + 0.44)).toBeNull();
+    expect(r.attempted).toBe(false);
+    expect(r.dueHeld(1.05 + 0.45)?.type).toBe('whiff');
+    expect(r.attempted).toBe(true);
   });
 
   it('未落台击球：弹起前 100ms 内挥得够快；落台前 20ms 以内不算', () => {
     let r = resolver();
-    expect(r.onSwing(swing({ tContact: 0.95 })).type).toBe('volley');
+    const v = r.onSwing(swing({ tContact: 0.95 }));
+    expect(v.type === 'held' && v.miss.type).toBe('volley');
+    expect(r.dueHeld(2)?.type).toBe('volley');
     r = resolver();
     expect(r.onSwing(swing({ tContact: 0.99 })).type).toBe('hit');
+  });
+
+  it('快的引拍落进「挥早」时先挂起，0.45 秒内反方向更快的前挥取代它', () => {
+    // 引拍：顺时针 14 rad/s，比理想时刻早 250ms；前挥：逆时针 22 rad/s，晚 40ms
+    const r = resolver();
+    const back = r.onSwing(
+      swing({ id: 1, motion: 1, dir: -1, wPeak: 14, tDetect: 0.79, tContact: 0.87 })
+    );
+    expect(back.type).toBe('held');
+    const fwd = r.onSwing(
+      swing({ id: 2, motion: 2, dir: 1, wPeak: 22, tDetect: 1.09, tContact: 1.16 })
+    );
+    expect(fwd.type).toBe('hit');
+    expect(r.pending?.swing.id).toBe(2);
+    expect(r.dueHeld(5)).toBeNull();
+  });
+
+  it('未落台也能被前挥取代', () => {
+    const r = resolver();
+    expect(
+      r.onSwing(swing({ id: 1, dir: -1, wPeak: 12, tDetect: 0.88, tContact: 0.95 })).type
+    ).toBe('held');
+    expect(r.onSwing(swing({ id: 2, dir: 1, wPeak: 20, tDetect: 1.05 })).type).toBe('hit');
+  });
+
+  it('挂起期间：同方向、更慢、或隔得太久的挥拍不能取代，到期算挥早', () => {
+    let r = resolver();
+    r.onSwing(swing({ id: 1, dir: 1, wPeak: 18, tDetect: 0.79, tContact: 0.87 }));
+    // 同方向更快：不取代（连挥两下正手，第一下挥早就是挥早）
+    expect(r.onSwing(swing({ id: 2, dir: 1, wPeak: 24, tDetect: 1.0 })).type).toBe('ignore');
+    // 反方向但更慢：不取代（收拍）
+    expect(r.onSwing(swing({ id: 3, dir: -1, wPeak: 10, tDetect: 1.05 })).type).toBe('ignore');
+    expect(r.dueHeld(0.79 + 0.45)?.type).toBe('whiff');
+    r = resolver();
+    expect(r.onSwing(swing({ id: 1, dir: -1, wPeak: 14, tDetect: 0.7, tContact: 0.85 })).type).toBe(
+      'held'
+    );
+    // 0.5 秒后才来：不取代
+    expect(r.onSwing(swing({ id: 2, dir: 1, wPeak: 22, tDetect: 1.2 })).type).toBe('ignore');
   });
 
   it('同一动作里更快的前向挥拍取代慢的引拍', () => {
