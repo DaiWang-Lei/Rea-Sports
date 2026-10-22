@@ -24,6 +24,7 @@
     "analyze:imu": "tsx scripts/analyze-imu.ts",
     "smoke:practice": "tsx scripts/smoke-practice.ts",
     "smoke:practice-phone": "tsx scripts/smoke-practice-phone.ts",
+    "smoke:practice-joycon": "tsx scripts/smoke-practice-joycon.ts",
     "eval:swing": "tsx scripts/eval-swing.ts",
     "analyze:practice": "tsx scripts/analyze-practice.ts"
   },

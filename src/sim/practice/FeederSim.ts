@@ -166,7 +166,14 @@ export class FeederSim {
   private netTouched = false;
   private pendingWhiff: { reason: WhiffReason; timingMs: number; stroke: Stroke } | null = null;
   /** 站位提示（来自球拍朝向）；null = 按来球位置 */
-  stanceHint: Stroke | null = null;
+  /**
+   * 本球的站位：送球时按落点相对「当时身体位置」决定一次，这一球里不再改。
+   * 以前用拍面朝向提示、并且拿「球相对身体当前位置」反复判断：等球时拍子是正手拿法，反手侧的球人物会先跑去正手位，
+   * 而反手位本身（身体在击球点右侧 0.12m）又会被判成正手，人物来回折返。实际用正手还是反手由挥拍方向决定。
+   */
+  private ballStance: Stroke | null = null;
+  /** 决定站位时用的参照：送球那一刻身体的横向位置 */
+  private stanceRefX = 0;
 
   constructor(opts: FeederOptions = {}) {
     this.tune = opts.tune ?? createTuning();
@@ -305,13 +312,8 @@ export class FeederSim {
     const me = this.player;
     const plan = this.plan;
     if (this.phase.kind === 'incoming' && plan && !this.resolver.attempted) {
-      // 站位：球拍朝向提示优先，否则看来球在身体哪一侧；已经确认挥拍时朝挥拍那一侧跨步
-      let stance: Stroke;
-      if (this.stanceHint) stance = this.stanceHint;
-      else {
-        const rel = (plan.p.x - me.mover.x) * forehandSign(me);
-        stance = rel > -0.15 ? 'fh' : 'bh';
-      }
+      // 站位：本球送出时定好的那一个；已经确认挥拍时朝挥拍那一侧跨步
+      const stance = this.ballStance ?? 'fh';
       if (!this.resolver.pending) {
         me.stance = stance;
         this.resolver.stance = stance;
@@ -397,6 +399,8 @@ export class FeederSim {
     this.player.swing = null;
     this.stats.feeds++;
     this.events.push({ type: 'feed', t: this.t, spin, speed });
+    this.ballStance = null;
+    this.stanceRefX = this.player.mover.x;
     this.replan();
     this.phase = { kind: 'incoming', since: this.t };
   }
@@ -408,6 +412,8 @@ export class FeederSim {
       this.resolver.end();
       return;
     }
+    const rel = (plan.p.x - this.stanceRefX) * forehandSign(this.player);
+    this.ballStance = rel > -0.15 ? 'fh' : 'bh';
     const ab = { plan: this.plan, popup: this.feedPopup, smash: false };
     if (this.resolver.ball) this.resolver.update(ab);
     else this.resolver.begin(ab);

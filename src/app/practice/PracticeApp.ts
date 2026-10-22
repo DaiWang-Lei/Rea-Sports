@@ -41,22 +41,31 @@ import {
 interface Settings {
   level: FeedLevel;
   zone: FeedZone;
-  latencyMs: number;
+  /** 画面延迟补偿（毫秒），按屏幕分别记：Mac 自带屏和电视的延迟差很多（键见 screenKey） */
+  latencyByScreen: Record<string, number>;
   leniency: number;
 }
 
 const SETTINGS_KEY = 'rea-practice';
 
+/** 浏览器窗口所在的屏幕，按分辨率区分（镜像显示时分不出来） */
+export function screenKey(): string {
+  const r = window.devicePixelRatio || 1;
+  return `${screen.width}×${screen.height}${r !== 1 ? ` @${r}x` : ''}`;
+}
+
 function loadSettings(): Settings {
-  const def: Settings = {
-    level: 1,
-    zone: 'mixed',
-    latencyMs: tuning.timing.displayLatencyMs,
-    leniency: 0.6,
-  };
+  const def: Settings = { level: 1, zone: 'mixed', latencyByScreen: {}, leniency: 0.6 };
   try {
-    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
-    return { ...def, ...(s ?? {}) };
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as
+      (Partial<Settings> & { latencyMs?: number }) | null;
+    const { latencyMs: old, ...rest } = s ?? {};
+    const out: Settings = { ...def, ...rest, latencyByScreen: { ...(rest.latencyByScreen ?? {}) } };
+    // 旧版只记了一个值：算作当前这块屏幕的
+    if (typeof old === 'number' && !(screenKey() in out.latencyByScreen)) {
+      out.latencyByScreen[screenKey()] = old;
+    }
+    return out;
   } catch {
     return def;
   }
@@ -70,7 +79,7 @@ function saveSettings(s: Settings): void {
   }
 }
 
-type Step = 'connect' | 'recenter' | 'ready' | 'play';
+type Step = 'connect' | 'still' | 'recenter' | 'ready' | 'play';
 
 const LEVEL_TEXT: Record<FeedLevel, string> = { 1: '入门', 2: '进阶', 3: '高手' };
 const ZONE_TEXT: Record<FeedZone, string> = { mixed: '全台', fh: '只送正手', bh: '只送反手' };
@@ -111,6 +120,7 @@ export class PracticeApp {
   private rec: PracticeRecorder | null = null;
   private lastClockLog = 0;
   private lastPoseLog = 0;
+  private lastBiasLog = NaN;
   private lastPlan: object | null = null;
 
   // DOM
@@ -157,6 +167,7 @@ export class PracticeApp {
           t: e.peak.t,
           w: e.peak.w,
           features: e.features,
+          neutral: e.neutralPitch,
         });
       },
       onButton: (b, down) => down && this.onButton(b),
@@ -214,6 +225,16 @@ export class PracticeApp {
 
   private linkStatus = { text: '正在准备手机连接…', ok: false };
 
+  /** 当前屏幕的画面延迟补偿（毫秒） */
+  private get latencyMs(): number {
+    return this.settings.latencyByScreen[screenKey()] ?? tuning.timing.displayLatencyMs;
+  }
+
+  private setLatency(ms: number): void {
+    this.settings.latencyByScreen[screenKey()] = clamp(Math.round(ms), 0, 300);
+    saveSettings(this.settings);
+  }
+
   private makeSim(): FeederSim {
     const s = this.settings;
     const sim = new FeederSim({
@@ -253,12 +274,12 @@ export class PracticeApp {
       this.rec?.push({ k: 'sim', rt: now, st: this.sim.t, e });
     }
     if (this.rec) this.recTick(now);
-    this.updateStance();
     this.draw();
     this.updateStatus(now);
     if (this.step === 'connect' && this.input.streaming) this.renderOverlay();
     if (this.step !== 'play' && this.step !== 'connect' && this.input.streaming)
       this.renderOverlayLive();
+    if (this.step === 'still') this.updateStillStep();
     requestAnimationFrame(() => this.loop());
   }
 
@@ -312,11 +333,6 @@ export class PracticeApp {
     };
   }
 
-  private updateStance(): void {
-    const dev = this.input.active;
-    this.sim.stanceHint = !this.keyboard && dev ? dev.paddle.stanceHint() : null;
-  }
-
   // ---------------------------------------------------------------- 输入
 
   private onDeviceSwing(e: {
@@ -333,7 +349,7 @@ export class PracticeApp {
       motion: c.motion,
       path: c.path,
       tDetect: this.simAt(performance.now()),
-      tContact: this.simAt(c.tContact) - this.settings.latencyMs / 1000,
+      tContact: this.simAt(c.tContact) - this.latencyMs / 1000,
       dir: e.dir,
       yawFrac: c.yawFrac,
       wPeak: c.wPeak,
@@ -370,7 +386,7 @@ export class PracticeApp {
           motion: this.keyId++,
           path: 'key',
           tDetect: this.simAt(now),
-          tContact: this.simAt(now) - this.settings.latencyMs / 1000,
+          tContact: this.simAt(now) - this.latencyMs / 1000,
           dir,
           yawFrac: 1,
           wPeak: w,
@@ -462,7 +478,8 @@ export class PracticeApp {
       level: s.level,
       zone: s.zone,
       leniency: s.leniency,
-      latencyMs: s.latencyMs,
+      latencyMs: this.latencyMs,
+      screen: screenKey(),
       windowMs: this.sim.windowMs,
       handed: this.input.handed,
       tauMin: cfg.tauMin,
@@ -476,6 +493,7 @@ export class PracticeApp {
     this.lastClockLog = 0;
     this.lastPoseLog = 0;
     this.lastPlan = null;
+    this.lastBiasLog = NaN;
     this.logCalib();
     this.rec.push({ k: 'pause', rt: performance.now(), paused: this.paused });
   }
@@ -522,7 +540,7 @@ export class PracticeApp {
       input,
       outcome,
       stance: p.stance,
-      stanceHint: this.sim.stanceHint,
+      stanceHint: this.keyboard ? null : (this.input.active?.paddle.stanceHint() ?? null),
       body: [p.mover.x, p.mover.y],
       face: face ? v3(face) : null,
       blade: blade ? v3(blade) : null,
@@ -551,6 +569,17 @@ export class PracticeApp {
       });
     }
     const d = rec.device;
+    if (d && d.motion.biasLearnedAt !== this.lastBiasLog) {
+      this.lastBiasLog = d.motion.biasLearnedAt;
+      const at = d.motion.biasLearnedAt;
+      rec.push({
+        k: 'gyroBias',
+        rt: now,
+        bias: v3(d.motion.gyroBias),
+        mode: d.motion.biasMode,
+        learnedAt: Number.isFinite(at) ? at : null,
+      });
+    }
     if (d && now - this.lastPoseLog >= 100) {
       this.lastPoseLog = now;
       const f = d.paddle.faceNormal();
@@ -681,7 +710,15 @@ export class PracticeApp {
     const recText = rec
       ? `<br/><span class="pr-rec">● 录制中 · 已录 ${rec.results} / ${RECORD_MAX_BALLS} 球 · ${Math.floor(rec.elapsedMs / 60000)}:${String(Math.floor(rec.elapsedMs / 1000) % 60).padStart(2, '0')}</span>`
       : '';
-    this.statusEl.innerHTML = `${dev}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.settings.latencyMs}ms</span>${recText}`;
+    let bias = '';
+    if (!this.keyboard && d?.kind === 'joycon') {
+      const at = d.motion.biasLearnedAt;
+      const min = Math.floor((now - at) / 60000);
+      bias = Number.isFinite(at)
+        ? ` · 陀螺仪零点 ${min < 1 ? '刚测过' : `${min} 分钟前测过`}`
+        : ' · 陀螺仪零点未测（平放 2 秒会自动测）';
+    }
+    this.statusEl.innerHTML = `${dev}${bias}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.latencyMs}ms</span>${recText}`;
   }
 
   private lastStatus = 0;
@@ -693,7 +730,7 @@ export class PracticeApp {
     const o = this.overlay;
     o.hidden = false;
     const dev = this.input.active;
-    if (this.step === 'connect' && dev && this.input.streaming) this.step = 'recenter';
+    if (this.step === 'connect' && dev && this.input.streaming) this.enterCalibration();
     if (this.step === 'connect') {
       o.innerHTML = `
         <div class="pr-panel">
@@ -749,12 +786,20 @@ export class PracticeApp {
     const btnConfirm = phone ? '手机上的「确认」' : 'Joy-Con 的 A 键';
     const top = phone ? '手机顶端' : 'Joy-Con 的肩键一端';
     const face = phone ? '屏幕' : '按键面';
+    // Joy-Con 多一步「平放」
+    const n0 = dev?.kind === 'joycon' ? 1 : 0;
     const body =
-      this.step === 'recenter'
-        ? `<h2>第 1 步：回中</h2>
+      this.step === 'still'
+        ? `<h2>第 1 步：平放</h2>
+           <p class="pr-big">把 Joy-Con <b>按键面朝上平放在桌上</b>，别碰它，2 秒就好。</p>
+           <p class="dim">这一步重新测陀螺仪零点，打球时画面里的拍子就不会慢慢转偏。之后打球中途把 Joy-Con 平放在桌上，也会自动重新测。</p>
+           <div class="pr-progress"><i></i></div>
+           <p class="pr-still-state dim">等你放好：按键面朝上平放，别碰它</p>`
+        : this.step === 'recenter'
+          ? `<h2>第 ${1 + n0} 步：回中</h2>
            <p class="pr-big">把${top}<b>平着指向电视</b>，按${btnRecenter}。</p>
            <p class="dim">之后打球时觉得方向不对，随时再按一次就行。</p>`
-        : `<h2>第 2 步：准备姿势</h2>
+          : `<h2>第 ${2 + n0} 步：准备姿势</h2>
            <p class="pr-big">像握球拍一样握住${phone ? '手机' : 'Joy-Con'}：<b>${face}朝向电视</b>、拍头朝上（正手准备姿势），按${btnConfirm}。</p>
            <p class="dim">这一步记下你的握法，用来判断拍面角度（拉上旋 / 搓下旋）。下次会自动沿用。</p>`;
     o.innerHTML = `
@@ -762,9 +807,14 @@ export class PracticeApp {
         ${body}
         <p class="dim">当前设备：${dev ? dev.name : '—'}</p>
         <div class="pr-actions">
+          ${this.step === 'still' ? '<button data-act="skip-still">跳过这一步</button>' : ''}
           <button data-act="skip">跳过校准，直接开始（只判断时机和力度）</button>
         </div>
       </div>`;
+    o.querySelector('[data-act="skip-still"]')?.addEventListener('click', () => {
+      this.step = 'recenter';
+      this.renderOverlay();
+    });
     o.querySelector('[data-act="skip"]')?.addEventListener('click', () => {
       this.input.recenter();
       this.startPlay('已跳过拍面校准');
@@ -785,8 +835,8 @@ export class PracticeApp {
         <div class="pr-setting"><span>难度</span>${([1, 2, 3] as FeedLevel[]).map((l) => opt('level', l, s.level, LEVEL_TEXT[l])).join('')}</div>
         <div class="pr-setting"><span>落点</span>${(['mixed', 'fh', 'bh'] as FeedZone[]).map((z) => opt('zone', z, s.zone, ZONE_TEXT[z])).join('')}</div>
         <div class="pr-setting"><span>宽容度</span>${[0.2, 0.6, 1].map((v) => opt('leniency', v, s.leniency, v < 0.4 ? '严格' : v < 0.8 ? '标准' : '宽松')).join('')}</div>
-        <div class="pr-setting"><span>画面延迟补偿</span>
-          <button data-lat="-10">−10</button><b class="pr-lat">${s.latencyMs} ms</b><button data-lat="10">+10</button>
+        <div class="pr-setting"><span>画面延迟补偿<small class="dim">（这块屏幕 ${screenKey()}）</small></span>
+          <button data-lat="-10">−10</button><b class="pr-lat">${this.latencyMs} ms</b><button data-lat="10">+10</button>
           ${med === null ? '<span class="dim">（打满 5 球后可以按平均时机自动校准）</span>' : `<button data-act="autolat">按我的平均时机校准（${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms）</button>`}
         </div>
         <div class="pr-setting"><span>持拍手</span>${opt('handed', 1, this.input.handed, '右手')}${opt('handed', -1, this.input.handed, '左手')}</div>
@@ -820,16 +870,14 @@ export class PracticeApp {
     );
     p.querySelectorAll<HTMLButtonElement>('[data-lat]').forEach((b) =>
       b.addEventListener('click', () => {
-        this.settings.latencyMs = clamp(this.settings.latencyMs + Number(b.dataset.lat), 0, 300);
-        saveSettings(this.settings);
+        this.setLatency(this.latencyMs + Number(b.dataset.lat));
         this.renderPause();
       })
     );
     p.querySelector('[data-act="autolat"]')?.addEventListener('click', () => {
       const m = this.sim.medianTiming();
       if (m !== null) {
-        this.settings.latencyMs = clamp(this.settings.latencyMs + m, 0, 300);
-        saveSettings(this.settings);
+        this.setLatency(this.latencyMs + m);
         this.sim.stats.timings.length = 0;
         this.renderPause();
       }
@@ -847,9 +895,53 @@ export class PracticeApp {
       this.paused = false;
       this.pauseEl.hidden = true;
       this.sim.pause(true);
-      this.step = 'recenter';
+      this.enterCalibration();
       this.overlayStep = null;
       this.renderOverlay();
     });
+  }
+
+  // ---------------------------------------------------------------- 平放（重新测陀螺仪零点）
+
+  /** 校准从哪一步开始：Joy-Con 先平放测零点，手机直接回中 */
+  private enterCalibration(): void {
+    if (this.input.active?.kind === 'joycon') {
+      this.step = 'still';
+      this.stillSince = performance.now();
+    } else {
+      this.step = 'recenter';
+    }
+  }
+
+  private stillSince = 0;
+
+  /** 每帧：平放这一步的进度；测到新的零点就进入回中 */
+  private updateStillStep(): void {
+    const dev = this.input.active;
+    if (!dev || dev.kind !== 'joycon') {
+      this.step = 'recenter';
+      this.renderOverlay();
+      return;
+    }
+    if (dev.motion.biasLearnedAt > this.stillSince) {
+      this.sfx.beep(880, 0.08);
+      this.hud.flash('陀螺仪零点测好了', '', 1.0, 'good');
+      this.step = 'recenter';
+      this.renderOverlay();
+      return;
+    }
+    const st = dev.motion.flatStatus;
+    const bar = this.overlay.querySelector<HTMLElement>('.pr-progress i');
+    const txt = this.overlay.querySelector<HTMLElement>('.pr-still-state');
+    const p = st.phase === 'collecting' ? st.progress : 0;
+    if (bar) bar.style.width = `${Math.round(p * 100)}%`;
+    if (txt) {
+      txt.textContent =
+        st.phase === 'collecting'
+          ? `测量中… ${Math.round(p * 100)}%`
+          : st.phase === 'settling'
+            ? '放稳了，马上开始测量…'
+            : '等你放好：按键面朝上平放，别碰它';
+    }
   }
 }

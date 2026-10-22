@@ -9,6 +9,8 @@
  * 准备姿势下球拍局部轴与 G 重合。
  *
  * 不依赖校准的特征：刷球方向（由设备在世界系的竖直速度判断，速度由去重力加速度带泄漏积分得到）。
+ *
+ * 拍面俯仰以「你平时击球的角度」为基准（正反手分开，见 neutralPitch）。
  */
 import {
   fromAxisAngle,
@@ -19,6 +21,7 @@ import {
   rotate,
   rotateInverse,
 } from '@/core/quat';
+import { clamp, DEG } from '@/core/math';
 import { type Vec3, vec3 } from '@/core/vec3';
 import { NO_FEATURES, type SwingFeatures } from '@/sim/hit/HitResolver';
 import type { Stroke } from '@/sim/players/PlayerSim';
@@ -27,6 +30,10 @@ import type { SwingSnapshot } from './SwingDetector';
 const G_ACC = 9.81;
 /** 速度积分的泄漏时间常数（秒）：抑制重力残差造成的漂移 */
 const VEL_LEAK = 0.35;
+/** 平时拍面角度：取最近几次击球、至少几次才生效、最多偏多少 */
+const NEUTRAL_N = 9;
+const NEUTRAL_MIN = 3;
+const NEUTRAL_MAX = 60 * DEG;
 
 export interface PaddleCalibrationData {
   /** 握法：球拍局部 → 设备局部 */
@@ -54,6 +61,8 @@ export class PaddleModel {
   readonly vel: Vec3 = vec3();
   /** 速度历史（与挥拍快照的时间对齐用） */
   private velHist: Array<{ t: number; v: Vec3 }> = [];
+  /** 正反手最近几次击球瞬间的拍面俯仰（原始值，弧度） */
+  private contactPitch: Record<Stroke, number[]> = { fh: [], bh: [] };
 
   get calibrated(): boolean {
     return this.hasHeading && this.grip !== null;
@@ -100,6 +109,8 @@ export class PaddleModel {
     // grip = q⁻¹ · A⁻¹（准备姿势下球拍局部轴 = G）
     const aInv = fromAxisAngle(0, 0, 1, -this.yaw);
     this.grip = normalizeQ(multiply({ w: q.w, x: -q.x, y: -q.y, z: -q.z }, aInv));
+    // 握法变了，之前记的拍面角度不再可比
+    this.contactPitch = { fh: [], bh: [] };
     return true;
   }
 
@@ -162,7 +173,29 @@ export class PaddleModel {
   }
 
   /**
+   * 你平时击球的拍面俯仰（弧度）：最近 9 次的中位数，正反手分开；不到 3 次时为 0。
+   * 拍面特征以它为基准：习惯的角度算「平」，比平时更压 / 更仰才算加旋。
+   * 否则习惯拍面后仰的人永远打不出上旋——2026-10-21 的录制里正手击球时拍面平均后仰约 41°，
+   * 30 球判了 10 个下旋、0 个上旋（核对过不是融合误差，是手上的真实角度，而且重新校准握法也救不了：一面摆正另一面更歪）。
+   */
+  neutralPitch(stroke: Stroke): number {
+    const h = this.contactPitch[stroke];
+    if (h.length < NEUTRAL_MIN) return 0;
+    const sorted = [...h].sort((a, b) => a - b);
+    return clamp(sorted[sorted.length >> 1], -NEUTRAL_MAX, NEUTRAL_MAX);
+  }
+
+  /** 记一次击球（挥拍峰值）时的拍面俯仰（facePitch 的原始值） */
+  recordContact(stroke: Stroke, pitch: number): void {
+    if (!Number.isFinite(pitch)) return;
+    const h = this.contactPitch[stroke];
+    h.push(pitch);
+    if (h.length > NEUTRAL_N) h.shift();
+  }
+
+  /**
    * 挥拍特征。onset = 确认时的快照，peak = 峰值快照（没有时用 onset）。
+   * facePitch 是相对你平时角度的偏差（见 neutralPitch）。
    */
   features(onset: SwingSnapshot, peak: SwingSnapshot | null, stroke: Stroke): SwingFeatures {
     const at = peak ?? onset;
@@ -170,8 +203,9 @@ export class PaddleModel {
     const vh = Math.hypot(v.x, v.y);
     const brush = vh + Math.abs(v.z) > 0.3 ? Math.atan2(v.z, Math.max(vh, 0.3)) : 0;
     if (!this.calibrated) return { ...NO_FEATURES, brush };
-    const p1 = this.facePitch(at.q, stroke);
-    const p0 = this.facePitch(onset.q, stroke);
+    const neutral = this.neutralPitch(stroke);
+    const p1 = this.facePitch(at.q, stroke) - neutral;
+    const p0 = this.facePitch(onset.q, stroke) - neutral;
     // 绕前进方向（G 的 +y）的转动 → 侧旋；左手镜像
     const wG = this.toGame(at.omegaWorld);
     const roll = wG.y * this.handed;

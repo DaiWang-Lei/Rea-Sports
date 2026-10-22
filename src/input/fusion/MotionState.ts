@@ -6,7 +6,15 @@ import { clamp, DEG } from '@/core/math';
 import { type Quat, quat, rotate } from '@/core/quat';
 import { type Vec3, scale, vec3 } from '@/core/vec3';
 import type { ImuSample } from '../types';
+import { FlatStillCalibrator, type FlatStillStatus } from './FlatStillCalibrator';
 import { CalibrationMode, GamepadMotion } from './GamepadMotion';
+
+/**
+ * 陀螺仪零点怎么学：
+ *  - auto：GamepadMotion 自带的静止 + 传感器融合自动校准（手机、调试页）；
+ *  - flat：只在「平放在桌上不动 2 秒」时学（Joy-Con 玩游戏时），其余时候用出厂零点或上次学到的值。
+ */
+export type GyroBiasMode = 'auto' | 'flat';
 
 export interface MotionFrame {
   /** 样本时间，毫秒 */
@@ -49,9 +57,14 @@ export class MotionState {
   private lastT = NaN;
   private layFlatUntil = -Infinity;
   private layFlatActive = false;
+  /** flat 模式：平放检测与学到的零点（°/s，在送进融合之前扣掉） */
+  private readonly flat = new FlatStillCalibrator();
+  private flatBias = vec3();
 
-  constructor() {
-    this.gm.setCalibrationMode(CalibrationMode.Stillness | CalibrationMode.SensorFusion);
+  constructor(readonly biasMode: GyroBiasMode = 'auto') {
+    this.gm.setCalibrationMode(
+      biasMode === 'auto' ? CalibrationMode.Stillness | CalibrationMode.SensorFusion : 0
+    );
   }
 
   reset(): void {
@@ -74,7 +87,14 @@ export class MotionState {
       this.layFlatActive = false;
     }
 
-    this.gm.processMotion(s.gyro, s.accel, dt);
+    let gyroIn = s.gyro;
+    if (this.biasMode === 'flat') {
+      const learned = this.flat.add(s);
+      if (learned) this.flatBias = learned;
+      const b = this.flatBias;
+      gyroIn = vec3(s.gyro.x - b.x, s.gyro.y - b.y, s.gyro.z - b.z);
+    }
+    this.gm.processMotion(gyroIn, s.accel, dt);
     const q = this.gm.orientation;
     const gyro = scale(this.gm.calibratedGyro, DEG);
     const f = this.frame;
@@ -86,7 +106,10 @@ export class MotionState {
     f.accel = { x: s.accel.x, y: s.accel.y, z: s.accel.z };
     f.linAccWorld = rotate(q, this.gm.linearAccel);
     f.clipped = s.clipped;
-    f.steady = this.gm.autoCalibrationIsSteady;
+    f.steady =
+      this.biasMode === 'flat'
+        ? this.flat.status.phase === 'collecting'
+        : this.gm.autoCalibrationIsSteady;
     this.samples++;
     return f;
   }
@@ -105,7 +128,17 @@ export class MotionState {
 
   /** 当前陀螺零偏（度/秒） */
   get gyroBias(): Vec3 {
-    return this.gm.calibrationOffset;
+    return this.biasMode === 'flat' ? { ...this.flatBias } : this.gm.calibrationOffset;
+  }
+
+  /** flat 模式：平放检测的状态（练习页的「平放」步骤显示进度用） */
+  get flatStatus(): FlatStillStatus {
+    return this.flat.status;
+  }
+
+  /** flat 模式：最近一次学到零点时的样本时间（毫秒），没学过为 −∞ */
+  get biasLearnedAt(): number {
+    return this.flat.learnedAt;
   }
 
   get calibrationConfidence(): number {

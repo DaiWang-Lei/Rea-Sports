@@ -28,6 +28,8 @@ export interface PracticeSettingsLog {
   zone: string;
   leniency: number;
   latencyMs: number;
+  /** 画面延迟补偿按屏幕记，这是当时的屏幕（分辨率） */
+  screen?: string;
   windowMs: number;
   handed: 1 | -1;
   tauMin: number;
@@ -72,7 +74,18 @@ export type PracticeLogEvent =
       face: V3 | null;
       blade: V3 | null;
     }
-  | { k: 'peak'; rt: number; id: number; t: number; w: number; features: SwingFeatures }
+  /** 挥拍峰值：拍面特征（facePitch 已减去 neutral = 你平时的拍面角度，弧度） */
+  | {
+      k: 'peak';
+      rt: number;
+      id: number;
+      t: number;
+      w: number;
+      features: SwingFeatures;
+      neutral?: number;
+    }
+  /** 陀螺仪零点（°/s）：录制开始时的值，以及之后每次重新测（平放）到的值 */
+  | { k: 'gyroBias'; rt: number; bias: V3; mode: string; learnedAt: number | null }
   /** 仿真事件原样（送球、落台、击球、挥空、未落台、结果…） */
   | { k: 'sim'; rt: number; st: number; e: FeederEvent }
   /** 设备姿态（机体 → 融合世界系）与画面里的拍子朝向，约 10 次/秒 */

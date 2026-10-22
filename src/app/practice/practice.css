@@ -56,6 +56,23 @@
   color: #7cf0b0;
 }
 
+.pr-progress {
+  height: 1.2vh;
+  min-height: 8px;
+  margin: 1.6vh 0 0.8vh;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.pr-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #7cf0b0;
+  transition: width 0.1s linear;
+}
+
 .pr-rec {
   color: #ff9a8a;
   font-weight: 600;

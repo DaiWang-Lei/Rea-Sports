@@ -18,14 +18,15 @@ function play(level: FeedLevel, sigmaMs: number | null, feeds: number, seed = 11
       const tc = plan.t + rng.normal(0, sigmaMs) / 1000;
       if (sim.t >= tc - 0.07) {
         swungFor = sim.stats.feeds;
-        const rel = (plan.p.x - sim.player.mover.x) * forehandSign(sim.player);
+        // 按人物站好的那一侧挥（站位在送球时就定好了）
+        const rel = sim.player.stance === 'fh' ? 1 : -1;
         sim.swing({
           id,
           motion: id++,
           path: 'fast',
           tDetect: sim.t,
           tContact: tc,
-          dir: rel > -0.15 ? 1 : -1,
+          dir: rel,
           yawFrac: 0.85,
           wPeak: rng.uniform(13, 20),
           features: NO_FEATURES,
@@ -66,8 +67,7 @@ describe('发球机练习', () => {
         forBall = sim.stats.feeds;
         stage = 0;
       }
-      const rel = (plan.p.x - sim.player.mover.x) * forehandSign(sim.player);
-      const fh = rel > -0.15 ? 1 : -1;
+      const fh = sim.player.stance === 'fh' ? 1 : -1;
       const tc = plan.t + 0.06;
       const swingAt = (dir: 1 | -1, wPeak: number, contact: number) =>
         sim.swing({
@@ -94,6 +94,37 @@ describe('发球机练习', () => {
     const early = reports.filter((r) => r.result === 'early' || r.result === 'volley').length;
     expect(early).toBe(0);
     expect(reports.filter((r) => r.result === 'in').length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('站位按落点在送球时定一次：反手侧的球人物直接走到反手位，不先跑去正手位、到位后也不再翻成正手', () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 12 && checked < 6; seed++) {
+      const sim = new FeederSim({ seed, level: 1, zone: 'bh' });
+      let last = 0;
+      while (sim.stats.feeds < 3 && sim.t < 40) {
+        sim.tick();
+        sim.drainEvents();
+        const plan = sim.plan;
+        if (!plan || sim.stats.feeds === last || sim.phase.kind !== 'incoming') continue;
+        last = sim.stats.feeds;
+        const fh = forehandSign(sim.player);
+        if ((plan.p.x - sim.player.mover.x) * fh > -0.3) continue;
+        // 不挥拍，一直看到理想击球时刻
+        const stances = new Set<string>();
+        let minX = Infinity;
+        while (sim.t < plan.t) {
+          sim.tick();
+          sim.drainEvents();
+          stances.add(sim.player.stance);
+          minX = Math.min(minX, sim.player.mover.x * fh);
+        }
+        expect([...stances]).toEqual(['bh']);
+        // 反手位在击球点（正手方向）0.12m 处；正手位要再往反手方向走 0.44m，不能跑过去
+        expect(minX).toBeGreaterThan(plan.p.x * fh + 0.12 - 0.05);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(4);
   });
 
   it('同一种子结果完全一样', () => {

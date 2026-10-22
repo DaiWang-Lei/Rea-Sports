@@ -61,6 +61,8 @@ export interface PeakEventOut {
   device: InputDevice;
   peak: SwingPeak;
   features: SwingFeatures;
+  /** 这一下用的「平时拍面角度」基准（弧度，记下这一下之前的值） */
+  neutralPitch: number;
 }
 
 export interface MotionInputEvents {
@@ -204,7 +206,8 @@ export class MotionInput {
       key,
       kind,
       name,
-      motion: new MotionState(),
+      // Joy-Con 的陀螺仪零点只在平放不动时学（见 FlatStillCalibrator）；手机的读数系统已经去过零偏
+      motion: new MotionState(kind === 'joycon' ? 'flat' : 'auto'),
       paddle,
       detector: new SwingDetector(kind === 'phone' ? SWING_PROFILES.phone : SWING_PROFILES.joycon),
       samples: 0,
@@ -314,11 +317,15 @@ export class MotionInput {
         } else {
           const stroke = this.lastStroke.get(e.id) ?? 'fh';
           const onset = this.lastCommitAt.get(e.id) ?? e.at;
+          const neutralPitch = d.paddle.neutralPitch(stroke);
           this.events.onPeak?.({
             device: d,
             peak: e,
             features: d.paddle.features(onset, e.at, stroke),
+            neutralPitch,
           });
+          if (d.paddle.calibrated)
+            d.paddle.recordContact(stroke, d.paddle.facePitch(e.at.q, stroke));
         }
       }
     }

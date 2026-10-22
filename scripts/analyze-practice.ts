@@ -71,12 +71,24 @@ function analyze(file: string): void {
   console.log(`\n======== ${basename(file)}`);
   console.log(
     `设备：${L.deviceName}（${L.deviceKind}）；难度 ${st.level}，落点 ${st.zone}，宽容度 ${st.leniency}；` +
-      `画面延迟补偿 ${st.latencyMs}ms；时机窗口 H = ${H}ms，击中 τ ∈ [${st.tauMin}, ${st.tauMax}]` +
+      `画面延迟补偿 ${st.latencyMs}ms${st.screen ? `（屏幕 ${st.screen}）` : ''}；时机窗口 H = ${H}ms，击中 τ ∈ [${st.tauMin}, ${st.tauMax}]` +
       `（早 ${f0(-st.tauMin * H)}ms ～ 晚 ${f0(st.tauMax * H)}ms），挥早挂起 ${st.holdEarly}s`
   );
   const n = r.source === 'phone' ? (r.samples?.length ?? 0) : r.reports.length;
   const dur = ev.length ? (ev[ev.length - 1].rt - ev[0].rt) / 1000 : 0;
   console.log(`时长 ${dur.toFixed(0)}s，体感数据 ${n} 条，事件 ${ev.length} 个`);
+
+  // ---- 陀螺仪零点
+  const biases = ev.filter((e): e is Ev<'gyroBias'> => e.k === 'gyroBias');
+  if (biases.length) {
+    const fmt = (b: Ev<'gyroBias'>) =>
+      `(${b.bias.map((v) => v.toFixed(2)).join(', ')})°/s${b.learnedAt === null ? '（出厂 / 没测过）' : ''}`;
+    const updates = biases.filter((b) => b.learnedAt !== null).length;
+    console.log(
+      `陀螺仪零点（${biases[0].mode}）：开始时 ${fmt(biases[0])}；录制中重新测了 ${Math.max(0, updates - (biases[0].learnedAt === null ? 0 : 1))} 次` +
+        (biases.length > 1 ? `，最后 ${fmt(biases[biases.length - 1])}` : '')
+    );
+  }
 
   // ---- 握法
   const calib = ev.filter((e): e is Ev<'calib'> => e.k === 'calib').pop();

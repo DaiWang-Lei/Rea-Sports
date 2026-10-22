@@ -1,6 +1,9 @@
 /**
  * 理想击球点：对方击球后，预测轨迹，找到球在接球方半台弹起之后、最适合击球的那一刻。
  * 代价函数 J = ((z − z*)/0.12)² + ((y − y*)/0.30)²，z* 为台面以上 0.22m（高球 0.55m），y* 为台端外 1.62m。
+ * 只在下降段（过了弹起后的最高点）里找：不加限制时，慢的高球会在「弹起后约 100ms 的上升段」和
+ * 「约 500ms 的下降段」之间跳（入门 18%、进阶 44%、高手 65% 的球选到上升段），而真人基本在最高点之后击球。
+ * 下降段里没有候选（预测太短）时才退回到整段。
  */
 import type { Vec3 } from '@/core/vec3';
 import type { Tuning } from '@/config/tuning';
@@ -68,19 +71,25 @@ export function planContact(
 
   const zStar = TABLE.height + (popup ? c.idealHeightPopup : c.idealHeight);
   const yStar = -sideDir(receiver) * c.idealY;
-  let best = -1;
-  let bestJ = Infinity;
   const startI = Math.ceil((bounceT + c.minAfterBounce - now) / SIM_DT);
-  for (let i = Math.max(0, startI); i < pred.states.length; i++) {
-    const t = now + i * SIM_DT;
-    if (t >= endT) break;
-    const s = pred.states[i];
-    const j = ((s.p.z - zStar) / 0.12) ** 2 + ((s.p.y - yStar) / 0.3) ** 2;
-    if (j < bestJ) {
-      bestJ = j;
-      best = i;
+  const search = (descendingOnly: boolean): number => {
+    let best = -1;
+    let bestJ = Infinity;
+    for (let i = Math.max(0, startI); i < pred.states.length; i++) {
+      const t = now + i * SIM_DT;
+      if (t >= endT) break;
+      const s = pred.states[i];
+      if (descendingOnly && s.v.z > 0) continue;
+      const j = ((s.p.z - zStar) / 0.12) ** 2 + ((s.p.y - yStar) / 0.3) ** 2;
+      if (j < bestJ) {
+        bestJ = j;
+        best = i;
+      }
     }
-  }
+    return best;
+  };
+  let best = search(true);
+  if (best < 0) best = search(false);
   if (best < 0) return fail();
   const s = pred.states[best];
   return {
