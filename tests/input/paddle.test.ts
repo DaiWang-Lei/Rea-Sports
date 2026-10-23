@@ -30,16 +30,15 @@ describe('拍面角度以平时的击球角度为基准', () => {
     expect(m.features(snap(30), snap(50, 5), 'fh').pitchChange / DEG).toBeCloseTo(20, 3);
   });
 
-  it('正反手各算各的；重新校准握法后清空', () => {
+  it('正反手各算各的；回中（重定电视方向）不影响', () => {
     const m = model();
     for (let i = 0; i < 4; i++) m.recordContact('fh', 40 * DEG);
     expect(m.neutralPitch('bh')).toBe(0);
     for (let i = 0; i < 4; i++) m.recordContact('bh', -10 * DEG);
     expect(m.neutralPitch('bh') / DEG).toBeCloseTo(-10, 6);
-    m.yaw = 0;
-    m.setReady(quat());
-    expect(m.neutralPitch('fh')).toBe(0);
-    expect(m.neutralPitch('bh')).toBe(0);
+    expect(m.setHeading(quat())).toBe(true);
+    expect(m.neutralPitch('fh') / DEG).toBeCloseTo(40, 6);
+    expect(m.neutralPitch('bh') / DEG).toBeCloseTo(-10, 6);
   });
 
   it('只看最近 9 次，偶尔一次反常不影响', () => {

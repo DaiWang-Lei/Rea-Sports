@@ -2,11 +2,11 @@
  * 球拍模型（纯逻辑）：把设备姿态换成游戏里球拍的朝向，并给击球提供拍面特征。
  *
  * 坐标：融合世界系 W（Z 向上，偏航任意）；游戏系 G（x 右、y 朝电视/对手、z 上）。
- * 校准两步，与握法无关：
- *  1. 回中：设备顶端（Joy-Con 肩键一端 / 手机顶端，机体 +X）指向电视 → 得到 W → G 的偏航 A；
- *  2. 准备姿势：像握拍一样、红面（正手面）朝电视、拍头朝上 → 记下「握法」grip（球拍局部 → 设备局部）。
+ * 设备本身就是球拍，握法固定（见 DEVICE_GRIP）：顶端（Joy-Con 肩键一端 / 手机顶端）是拍头，
+ * 正面（Joy-Con 按键面 / 手机屏幕）是红面（正手面）。
+ * 校准只有一步「准备姿势」：摆正手准备姿势、红面朝向电视，按确认（或回中键）→ 得到 W → G 的偏航 A。
  * 之后球拍在 G 里的姿态 R = A · q · grip。球拍局部轴：+Y = 红面法向，+Z = 拍头方向，+X = Y × Z。
- * 准备姿势下球拍局部轴与 G 重合。
+ * 打球中偏航会慢慢漂（Joy-Con 握在手里变热后零点会变），等球时由 trackHeading 自动拉回。
  *
  * 不依赖校准的特征：刷球方向（由设备在世界系的竖直速度判断，速度由去重力加速度带泄漏积分得到）。
  *
@@ -35,10 +35,30 @@ const NEUTRAL_N = 9;
 const NEUTRAL_MIN = 3;
 const NEUTRAL_MAX = 60 * DEG;
 
-export interface PaddleCalibrationData {
-  /** 握法：球拍局部 → 设备局部 */
-  grip: [number, number, number, number];
-}
+/**
+ * 握法（球拍局部 → 设备局部）：球拍 +Y（红面）= 机体 +Z（按键面 / 屏幕），球拍 +Z（拍头）= 机体 +X（顶端），
+ * 球拍 +X = 机体 +Y。即 x → y → z → x 的轮换，绕 (1,1,1) 转 120°。Joy-Con 与手机的机体系约定相同。
+ *
+ * 以前在「准备姿势」那一刻测整个握法，假定此刻按键面正对电视；可回中定下的电视方向和玩家实际朝向有偏差时，
+ * 偏差就被永久记进了握法（2026-10-22 的录制里歪了 32°）。同一份录制里，正手时拍子正是顺着按键面的方向运动
+ * （12 次中位只差 3°，反手顺着背面），10-21 的录制也一样，所以「按键面 = 正手面」不必再测。
+ */
+export const DEVICE_GRIP: Quat = { w: 0.5, x: 0.5, y: 0.5, z: 0.5 };
+
+/**
+ * 自动校正电视方向（trackHeading）：等球时手安静、拍面大致竖着，就假定红面（或背面）这条线朝着电视，
+ * 按时间常数 TAU 把偏航拉过去，同时积分出偏航漂移速度（零点变化造成的），一直补上。
+ * 回放录制（第一次送球时回中）：等球姿势的偏航趋势 10-22 从每分钟 38° 降到 4°，10-21 从 23° 降到 10°；
+ * 两份录制都只有 85 秒，漂移速度要一分钟左右才估准。
+ */
+const TRACK_QUIET_W = 1.5; // 安静：角速度低于这个（弧度/秒）
+const TRACK_QUIET_S = 0.15; // 并且持续这么久（秒）
+const TRACK_FACE_Z = 0.7; // 红面法向竖直分量超过这个（拍子平躺）不校正
+const TRACK_MAX_ERR = 45 * DEG; // 偏得更多不自动拉（可能是在做别的动作），要玩家按回中
+const TRACK_TAU = 3; // 秒
+const TRACK_I_ERR = 20 * DEG; // 误差小于这个才积分漂移速度
+const TRACK_KI = 0.02; // 1/秒²
+const TRACK_MAX_DRIFT = 2 * DEG; // 弧度/秒
 
 export interface MotionLike {
   t: number;
@@ -52,7 +72,10 @@ export class PaddleModel {
   /** W → G 的偏航角（弧度）：A = Rz(yaw) */
   yaw = 0;
   hasHeading = false;
-  grip: Quat | null = null;
+  /** 握法（球拍局部 → 设备局部），默认固定为 DEVICE_GRIP；测试里可以换 */
+  grip: Quat = DEVICE_GRIP;
+  /** 偏航漂移速度估计（弧度/秒）：每个样本从 yaw 里扣掉 drift·dt。重新测过陀螺仪零点后应清零 */
+  drift = 0;
   /** 1 右手，−1 左手 */
   handed: 1 | -1 = 1;
   /** 最新设备姿态（机体 → W） */
@@ -65,7 +88,7 @@ export class PaddleModel {
   private contactPitch: Record<Stroke, number[]> = { fh: [], bh: [] };
 
   get calibrated(): boolean {
-    return this.hasHeading && this.grip !== null;
+    return this.hasHeading;
   }
 
   update(f: MotionLike): void {
@@ -93,41 +116,52 @@ export class PaddleModel {
     return best;
   }
 
-  /** 回中：设备顶端（机体 +X）指向电视。顶端几乎竖直时无法确定方向，返回 false */
+  /**
+   * 回中（也就是「准备姿势」）：红面（Joy-Con 按键面 / 手机屏幕）朝向电视。
+   * 只用红面的水平朝向，拍子前后仰、拍头歪不影响。红面几乎朝上或朝下时无法确定方向，返回 false。
+   * 漂移速度 drift 保留（它来自零点，与回中无关）。
+   */
   setHeading(q: Quat = this.q): boolean {
-    const x = rotate(q, vec3(1, 0, 0));
-    const h = Math.hypot(x.x, x.y);
+    const n = rotate(q, rotate(this.grip, vec3(0, 1, 0)));
+    const h = Math.hypot(n.x, n.y);
     if (h < 0.35) return false;
-    this.yaw = Math.PI / 2 - Math.atan2(x.y, x.x);
+    this.yaw = Math.PI / 2 - Math.atan2(n.y, n.x);
     this.hasHeading = true;
     return true;
   }
 
-  /** 准备姿势：记下握法（需要先回中） */
-  setReady(q: Quat = this.q): boolean {
-    if (!this.hasHeading) return false;
-    // grip = q⁻¹ · A⁻¹（准备姿势下球拍局部轴 = G）
-    const aInv = fromAxisAngle(0, 0, 1, -this.yaw);
-    this.grip = normalizeQ(multiply({ w: q.w, x: -q.x, y: -q.y, z: -q.z }, aInv));
-    // 握法变了，之前记的拍面角度不再可比
-    this.contactPitch = { fh: [], bh: [] };
-    return true;
+  private quietFor = 0;
+
+  /**
+   * 每个样本调用一次。先按漂移速度修正偏航；correct 为真（发球机练习进行中、当前设备）时，
+   * 如果手安静（|gyro| 低于阈值一段时间）、拍面大致竖着、红面（或背面）偏离电视方向不到 45°，
+   * 就把偏航往「正对电视」拉，并更新漂移速度。gyro：去零偏角速度（机体系，弧度/秒）；dt：秒。
+   */
+  trackHeading(gyro: Vec3, dt: number, correct: boolean): void {
+    if (!this.hasHeading || !(dt > 0)) return;
+    this.yaw -= this.drift * dt;
+    const w = Math.hypot(gyro.x, gyro.y, gyro.z);
+    this.quietFor = w < TRACK_QUIET_W ? this.quietFor + dt : 0;
+    if (!correct || this.quietFor < TRACK_QUIET_S) return;
+    const r = this.paddleQuat();
+    if (!r) return;
+    const n = rotate(r, vec3(0, 1, 0));
+    if (Math.abs(n.z) > TRACK_FACE_Z) return;
+    // 红面水平朝向相对 +y 的转角（逆时针为正）；背面朝电视也算，折到 ±90° 以内
+    let e = Math.atan2(n.y, n.x) - Math.PI / 2;
+    e = Math.atan2(Math.sin(e), Math.cos(e));
+    if (e > Math.PI / 2) e -= Math.PI;
+    else if (e < -Math.PI / 2) e += Math.PI;
+    if (Math.abs(e) > TRACK_MAX_ERR) return;
+    this.yaw -= e * Math.min(1, dt / TRACK_TAU);
+    if (Math.abs(e) < TRACK_I_ERR) {
+      this.drift = clamp(this.drift + TRACK_KI * e * dt, -TRACK_MAX_DRIFT, TRACK_MAX_DRIFT);
+    }
   }
 
-  loadGrip(data: PaddleCalibrationData | null): void {
-    if (!data) return;
-    const [w, x, y, z] = data.grip;
-    this.grip = normalizeQ(quat(w, x, y, z));
-  }
-
-  saveGrip(): PaddleCalibrationData | null {
-    const g = this.grip;
-    return g ? { grip: [g.w, g.x, g.y, g.z] } : null;
-  }
-
-  /** 球拍在 G 里的姿态（未完成校准时返回 null） */
+  /** 球拍在 G 里的姿态（还没回中时返回 null） */
   paddleQuat(q: Quat = this.q): Quat | null {
-    if (!this.grip || !this.hasHeading) return null;
+    if (!this.hasHeading) return null;
     const a = fromAxisAngle(0, 0, 1, this.yaw);
     return normalizeQ(multiply(multiply(a, q), this.grip));
   }
@@ -176,7 +210,7 @@ export class PaddleModel {
    * 你平时击球的拍面俯仰（弧度）：最近 9 次的中位数，正反手分开；不到 3 次时为 0。
    * 拍面特征以它为基准：习惯的角度算「平」，比平时更压 / 更仰才算加旋。
    * 否则习惯拍面后仰的人永远打不出上旋——2026-10-21 的录制里正手击球时拍面平均后仰约 41°，
-   * 30 球判了 10 个下旋、0 个上旋（核对过不是融合误差，是手上的真实角度，而且重新校准握法也救不了：一面摆正另一面更歪）。
+   * 30 球判了 10 个下旋、0 个上旋；按固定握法（按键面 = 正手面）重算 10-22 的录制，正手击球时按键面仍平均后仰约 30°。
    */
   neutralPitch(stroke: Stroke): number {
     const h = this.contactPitch[stroke];

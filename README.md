@@ -59,9 +59,11 @@ pnpm dev          # 打开 https://localhost:5288
 ## 发球机练习怎么玩
 
 1. 打开发球机练习，扫码连手机（或点「连接 Joy-Con」，没有设备可以先用键盘：F 正手、J 反手）。
-2. **回中**：把手机顶端（Joy-Con 肩键一端）**平着指向电视**，按手机上的「回中」（Joy-Con 的 Y 键）。
-3. **准备姿势**：像握球拍一样握住，**屏幕（Joy-Con 按键面）朝向电视、拍头朝上**，按「确认」（Joy-Con 的 A 键）。
-   这一步记下你的握法，下次自动沿用；也可以跳过，只是不判断拍面角度。
+2. **平放**（只有 Joy-Con）：按键面朝上平放在桌上 2 秒，测陀螺仪零点。打球中途平放不动也会自动重测。
+3. **准备姿势**：把设备当成球拍——手机顶端（Joy-Con 肩键一端）是拍头，屏幕（Joy-Con 按键面）是正手面（红面）。
+   摆正手准备姿势、**屏幕（按键面）朝向电视**，按「确认」（Joy-Con 的 A 键）。这一步定下电视的方向；
+   打球中觉得拍子方向偏了，摆同样的姿势按「回中」（Joy-Con 的 Y 键）。等球时拿稳不动，游戏也会自动慢慢校正方向。
+   也可以跳过，只是不判断拍面角度。
 4. 发球机开始送球。球在你这边弹起、来到身前时挥拍：
    - 右手正手从右往左挥，反手从左往右挥（左手相反，暂停菜单里可以切换）；
    - **早挥打斜线、晚挥打直线**，太早 / 太晚会挥空，在球弹起之前就打到算「未落台击球」；
@@ -95,7 +97,8 @@ pnpm smoke:phone    # 冒烟测试：模拟一台手机经本地中转发数据�
 pnpm smoke:rtc [网址]  # 冒烟测试：两个浏览器页面经 WebRTC 直连（默认本地；也可传线上网址）
 pnpm smoke:mqtt     # 测试公共 MQTT 握手服务器能否连通
 pnpm smoke:practice [网址]      # 发球机练习冒烟测试：键盘模式按时机自动挥拍
-pnpm smoke:practice-phone       # 模拟一台手机走完回中 → 准备姿势 → 挥拍回球（需先 pnpm dev）
+pnpm smoke:practice-phone       # 模拟一台手机摆准备姿势 → 挥拍回球 → 录制下载（需先 pnpm dev）
+pnpm smoke:practice-joycon      # 模拟一台 Joy-Con 走完平放 → 准备姿势 → 挥拍回球（需先 pnpm dev）
 pnpm analyze:imu fixtures/imu/xxx.json   # 分析录制：采样率、丢包、蓝牙延迟、挥拍
 pnpm eval:swing fixtures/imu/xxx.json    # 在录制上跑挥拍识别
 pnpm shot /phone.html out.png 390 844   # 截图（需先 pnpm dev）

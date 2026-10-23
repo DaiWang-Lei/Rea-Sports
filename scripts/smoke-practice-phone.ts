@@ -1,6 +1,6 @@
 /**
  * 手机 → 发球机练习 端到端冒烟测试（需要先 pnpm dev，走本地中转）：
- * 用 Node 模拟一台手机（屏幕朝上、顶端指向电视），按「回中」「确认」完成校准，
+ * 用 Node 模拟一台手机，立着摆正手准备姿势（顶端朝上、屏幕朝电视），按「确认」完成校准，
  * 然后在理想击球时刻附近合成一次正手挥拍（绕竖直轴逆时针转动），检查回球结果。
  * 同时测「录制这局」：暂停菜单里开始录制，打完后停止并下载，存到第二个参数给的路径。
  * 用法：pnpm smoke:practice-phone [截图路径] [录制文件路径]
@@ -54,17 +54,36 @@ send({
   gyroAxes: 'xyz',
 });
 
-// 机体系：屏幕朝上平放、顶端指向电视 → 加速度 (0,0,1)，绕竖直轴的转动 = 机体 z
+// 机体系：立着、顶端朝上、屏幕朝电视 → 加速度 (1,0,0)，绕竖直轴的转动 = 机体 x
+// home = true：按累计转过的角度慢慢转回准备姿势（172°/s，低于慢挥阈值），转完自动变回 false
 let seq = 0;
 let yawRate = 0; // 度/秒
+let yawAcc = 0; // 度
+let home = false;
 const tStart = Date.now();
 const timer = setInterval(() => {
+  if (home && yawRate === 0) {
+    if (Math.abs(yawAcc) > 0.2) {
+      const r = -Math.sign(yawAcc) * Math.min(172, Math.abs(yawAcc) * 60);
+      yawAcc += r / 60;
+      send({
+        type: 'imu',
+        seq: seq++,
+        t: Date.now() - tStart + 100000,
+        g: [r, 0, 0],
+        a: [1, 0, 0],
+      });
+      return;
+    }
+    home = false;
+  }
+  yawAcc += yawRate / 60;
   send({
     type: 'imu',
     seq: seq++,
     t: Date.now() - tStart + 100000,
-    g: [0, 0, yawRate],
-    a: [0, 0, 1],
+    g: [yawRate, 0, 0],
+    a: [1, 0, 0],
   });
 }, 1000 / 60);
 
@@ -81,18 +100,12 @@ const state = () =>
     (window as unknown as { __practice: { debugState(): unknown } }).__practice.debugState()
   ) as Promise<St>;
 
-// 等页面进入「回中」步骤
+// 等页面进入「准备姿势」步骤
 for (let i = 0; i < 50 && (await state()).step === 'connect'; i++) await sleep(100);
 console.log(`连接后步骤：${(await state()).step}`);
-send({ type: 'btn', name: 'recenter', down: true });
-send({ type: 'btn', name: 'recenter', down: false });
+send({ type: 'btn', name: 'confirm', down: true });
+send({ type: 'btn', name: 'confirm', down: false });
 await sleep(300);
-console.log(`回中后步骤：${(await state()).step}`);
-if ((await state()).step === 'ready') {
-  send({ type: 'btn', name: 'confirm', down: true });
-  send({ type: 'btn', name: 'confirm', down: false });
-  await sleep(300);
-}
 console.log(`校准后步骤：${(await state()).step}`);
 
 // 暂停 → 开始录制 → 继续
@@ -111,12 +124,9 @@ async function forehand(dir: 1 | -1) {
   }
   yawRate = 0;
   await sleep(150);
-  // 收拍：慢慢转回来，免得姿态越转越偏
-  for (const w of [2, 3, 3, 2, 1]) {
-    yawRate = (-dir * w * 180) / Math.PI;
-    await sleep(1000 / 60);
-  }
-  yawRate = 0;
+  // 收拍：慢慢转回准备姿势（真人每球都会回到准备姿势）
+  home = true;
+  for (let i = 0; i < 100 && home; i++) await sleep(20);
 }
 
 let swung = -1;

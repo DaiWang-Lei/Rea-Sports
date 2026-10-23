@@ -2,13 +2,15 @@
  * 分析发球机练习录制（暂停菜单「录制这局」导出的 JSON）：
  *  - 每一球：理想击球时刻、每次挥拍的预测接触时刻（早晚多少毫秒）、判定结果、站位误差、最后结果；
  *  - 汇总：时机分布（判定用到的那一下）、各种结果的次数、建议的画面延迟补偿；
- *  - 握法：准备姿势时设备怎么拿（各轴在游戏坐标里的朝向），打球时拍头 / 红面平均朝哪。
+ *  - 握法：固定握法，或旧录制里准备姿势时设备怎么拿（各轴在游戏坐标里的朝向）；打球时拍头 / 红面平均朝哪；
+ *    电视方向的自动校正（2026-10-23 起）。
  * 用法：pnpm analyze:practice <录制.json> [...]
  */
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { conjugate, quat, rotate } from '../src/core/quat';
 import { vec3 } from '../src/core/vec3';
+import { DEVICE_GRIP } from '../src/input/paddle/PaddleModel';
 import {
   isPracticeRecording,
   type PracticeLogEvent,
@@ -94,11 +96,35 @@ function analyze(file: string): void {
   const calib = ev.filter((e): e is Ev<'calib'> => e.k === 'calib').pop();
   if (calib?.grip) {
     const [w, x, y, z] = calib.grip;
-    const gInv = conjugate(quat(w, x, y, z));
-    console.log('准备姿势时（按确认那一刻）设备各轴在游戏里的朝向：');
-    for (const [k, a] of AXES) console.log(`  ${axisName[k]}（${k}）→ ${dirText(rotate(gInv, a))}`);
+    const g = DEVICE_GRIP;
+    const fixed = Math.abs(w * g.w + x * g.x + y * g.y + z * g.z) > 0.9999;
+    if (fixed) {
+      console.log(`握法：固定（${axisName['+X']}是拍头，${axisName['+Z']}是红面 / 正手面）`);
+    } else {
+      // 2026-10-23 之前：握法在准备姿势那一刻测出
+      const gInv = conjugate(quat(w, x, y, z));
+      console.log('准备姿势时（按确认那一刻）设备各轴在游戏里的朝向：');
+      for (const [k, a] of AXES)
+        console.log(`  ${axisName[k]}（${k}）→ ${dirText(rotate(gInv, a))}`);
+    }
   } else {
     console.log('没有准备姿势校准（拍面角度不参与判定）');
+  }
+  // ---- 自动校正电视方向（2026-10-23 起 pose 里带偏航）
+  const tracked = ev.filter(
+    (e): e is Ev<'pose'> & { yaw: number; drift: number } =>
+      e.k === 'pose' && e.yaw !== undefined && e.drift !== undefined
+  );
+  if (tracked.length > 1) {
+    const D = 180 / Math.PI;
+    const a = tracked[0];
+    const b = tracked[tracked.length - 1];
+    let turn = (b.yaw - a.yaw) * D;
+    turn = ((turn + 540) % 360) - 180;
+    console.log(
+      `电视方向：录制中自动校正 / 回中累计转了 ${f0(turn)}°（${f0((b.rt - a.rt) / 1000)} 秒）；` +
+        `估计的偏航漂移速度 开始 ${f2(a.drift * D)}°/s，最后 ${f2(b.drift * D)}°/s`
+    );
   }
   const poses = ev.filter((e): e is Ev<'pose'> => e.k === 'pose' && !!e.blade && !!e.face);
   if (poses.length) {

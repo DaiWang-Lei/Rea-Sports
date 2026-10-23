@@ -12,7 +12,7 @@ import {
   requestJoyCons,
 } from '@/input/HidManager';
 import { JoyConDriver } from '@/input/joycon/JoyConDriver';
-import { PaddleModel, type PaddleCalibrationData } from '@/input/paddle/PaddleModel';
+import { PaddleModel } from '@/input/paddle/PaddleModel';
 import {
   SWING_PROFILES,
   type SwingCommit,
@@ -46,6 +46,8 @@ export interface InputDevice {
   samples: number;
   lastSampleAt: number;
   lastActivityAt: number;
+  /** 上次看到的陀螺仪零点学习时刻：变了就清掉偏航漂移速度 */
+  biasSeenAt: number;
 }
 
 export interface SwingEventOut {
@@ -77,14 +79,7 @@ export interface MotionInputEvents {
   onRawSample?: (device: InputDevice, sample: ImuSample) => void;
 }
 
-/**
- * 握法的存储键。手机的握法在 2026-10-21 之前是按接错的陀螺轴算出来的（见 phoneToBody），
- * 换个键名让旧数据失效，回到需要重新做「准备姿势」
- */
-const GRIP_KEYS: Record<DeviceKind, string> = {
-  joycon: 'rea-grip-joycon',
-  phone: 'rea-grip-phone-xyz',
-};
+// 握法自 2026-10-23 起固定（见 DEVICE_GRIP），不再保存；以前存的 rea-grip-* 不再读取
 const HANDED_KEY = 'rea-handed';
 
 function loadJson<T>(key: string): T | null {
@@ -113,6 +108,8 @@ export class MotionInput {
   room: string | null = null;
   linkKind: 'relay' | 'rtc' | null = null;
   handed: 1 | -1 = 1;
+  /** 等球时自动校正当前设备的电视方向（游戏进行中、未暂停时由游戏打开） */
+  autoHeading = false;
   private activeKey: string | null = null;
   private hidKeys = new WeakMap<HIDDevice, string>();
   private hidCounter = 0;
@@ -181,19 +178,10 @@ export class MotionInput {
     return !!d && performance.now() - d.lastSampleAt < 800;
   }
 
-  /** 回中（设备顶端指向电视） */
+  /** 回中 / 准备姿势：正手准备姿势、红面（Joy-Con 按键面 / 手机屏幕）朝向电视 */
   recenter(): boolean {
     const d = this.active;
     return !!d && d.paddle.setHeading();
-  }
-
-  /** 准备姿势：记下握法并保存 */
-  captureReady(): boolean {
-    const d = this.active;
-    if (!d || !d.paddle.setReady()) return false;
-    const data = d.paddle.saveGrip();
-    if (data) saveJson(GRIP_KEYS[d.kind], data);
-    return true;
   }
 
   // ---------------------------------------------------------------- 设备
@@ -201,7 +189,6 @@ export class MotionInput {
   private newDevice(key: string, kind: DeviceKind, name: string): InputDevice {
     const paddle = new PaddleModel();
     paddle.handed = this.handed;
-    paddle.loadGrip(loadJson<PaddleCalibrationData>(GRIP_KEYS[kind]));
     const d: InputDevice = {
       key,
       kind,
@@ -213,6 +200,7 @@ export class MotionInput {
       samples: 0,
       lastSampleAt: -Infinity,
       lastActivityAt: -Infinity,
+      biasSeenAt: -Infinity,
     };
     this.devices.set(key, d);
     if (!this.activeKey) this.activeKey = key;
@@ -292,6 +280,12 @@ export class MotionInput {
       if (d.kind === 'phone') this.events.onRawSample?.(d, s);
       const f = d.motion.process(s);
       d.paddle.update(f);
+      // 重新测过陀螺仪零点：之前估计的偏航漂移速度作废
+      if (d.motion.biasLearnedAt !== d.biasSeenAt) {
+        d.biasSeenAt = d.motion.biasLearnedAt;
+        d.paddle.drift = 0;
+      }
+      d.paddle.trackHeading(f.gyro, f.dt, this.autoHeading && d === this.active);
       d.samples++;
       d.lastSampleAt = performance.now();
       const evs = d.detector.process(f);

@@ -1,5 +1,5 @@
 /**
- * 发球机练习页：连接设备 → 回中 → 准备姿势 → 发球机送球，玩家挥拍回球。
+ * 发球机练习页：连接设备 →（Joy-Con）平放测零点 → 准备姿势（定电视方向）→ 发球机送球，玩家挥拍回球。
  * 每一球给出结果卡片（时机早晚、正反手、力度、旋转），可以调难度、落点区域和画面延迟补偿。
  */
 import './practice.css';
@@ -79,7 +79,7 @@ function saveSettings(s: Settings): void {
   }
 }
 
-type Step = 'connect' | 'still' | 'recenter' | 'ready' | 'play';
+type Step = 'connect' | 'still' | 'ready' | 'play';
 
 const LEVEL_TEXT: Record<FeedLevel, string> = { 1: '入门', 2: '进阶', 3: '高手' };
 const ZONE_TEXT: Record<FeedZone, string> = { mixed: '全台', fh: '只送正手', bh: '只送反手' };
@@ -254,6 +254,8 @@ export class PracticeApp {
     const now = performance.now();
     const dt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
     this.last = now;
+    // 等球时自动校正电视方向：只在发球机练习进行中
+    this.input.autoHeading = this.step === 'play' && !this.paused && !this.keyboard;
     if (!this.paused && this.step === 'play') {
       this.acc += dt;
       let steps = 0;
@@ -411,29 +413,19 @@ export class PracticeApp {
       if (this.step === 'play') this.togglePause();
       return;
     }
-    if (this.step === 'recenter' || (this.step === 'ready' && b === 'recenter')) {
-      if (b === 'recenter' || b === 'confirm') {
-        if (this.input.recenter()) {
-          this.sfx.beep(880, 0.08);
-          const dev = this.input.active;
-          this.step = dev?.paddle.grip ? 'play' : 'ready';
-          if (this.step === 'play') this.startPlay('已回中，握法沿用上次的校准');
-          else this.renderOverlay();
-        } else {
-          this.hud.flash('顶端别竖直朝上', '请把设备顶端平着指向电视', 1.6, 'bad');
-        }
-      }
-      return;
-    }
-    if (this.step === 'ready' && b === 'confirm') {
-      if (this.input.captureReady()) {
+    const face = this.input.active?.kind === 'phone' ? '屏幕' : '按键面';
+    if (this.step === 'ready' && (b === 'confirm' || b === 'recenter')) {
+      if (this.input.recenter()) {
         this.sfx.beep(1040, 0.1);
         this.startPlay('校准完成');
+      } else {
+        this.hud.flash(`${face}别朝上或朝下`, `摆正手准备姿势，${face}朝向电视`, 1.6, 'bad');
       }
       return;
     }
     if (this.step === 'play' && b === 'recenter') {
       if (this.input.recenter()) this.hud.flash('已回中', '', 0.8);
+      else this.hud.flash('没能回中', `摆正手准备姿势、${face}朝向电视再按`, 1.4, 'bad');
     }
   }
 
@@ -514,13 +506,12 @@ export class PracticeApp {
     const rec = this.rec;
     const d = rec?.device;
     if (!rec || !d) return;
-    const g = d.paddle.grip;
     rec.push({
       k: 'calib',
       rt: performance.now(),
       hasHeading: d.paddle.hasHeading,
       yaw: d.paddle.yaw,
-      grip: g ? q4(g) : null,
+      grip: q4(d.paddle.grip),
       handed: d.paddle.handed,
     });
   }
@@ -590,6 +581,8 @@ export class PracticeApp {
         q: q4(d.paddle.q),
         face: f ? v3(f) : null,
         blade: b ? v3(b) : null,
+        yaw: d.paddle.yaw,
+        drift: d.paddle.drift,
       });
     }
     const gone = d !== null && !this.input.devices.has(d.key);
@@ -704,7 +697,7 @@ export class PracticeApp {
     const dev = this.keyboard
       ? '键盘（F 正手 · J 反手 · 按住 W 上旋 / S 下旋 · Shift 大力）'
       : d
-        ? `${d.name}${this.input.streaming ? '' : '（没有数据）'}${d.paddle.calibrated ? '' : ' · 未校准拍面'}`
+        ? `${d.name}${this.input.streaming ? '' : '（没有数据）'}${d.paddle.calibrated ? '' : ' · 还没定电视方向（摆准备姿势按回中）'}`
         : '没有连接体感设备';
     const rec = this.rec;
     const recText = rec
@@ -718,7 +711,7 @@ export class PracticeApp {
         ? ` · 陀螺仪零点 ${min < 1 ? '刚测过' : `${min} 分钟前测过`}`
         : ' · 陀螺仪零点未测（平放 2 秒会自动测）';
     }
-    this.statusEl.innerHTML = `${dev}${bias}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.latencyMs}ms</span>${recText}`;
+    this.statusEl.innerHTML = `${dev}${bias}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中（摆准备姿势按）：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.latencyMs}ms</span>${recText}`;
   }
 
   private lastStatus = 0;
@@ -775,7 +768,7 @@ export class PracticeApp {
 
   private overlayStep: Step | null = null;
 
-  /** 回中 / 准备姿势两步：内容按设备类型给出按键提示 */
+  /** 平放 / 准备姿势两步：内容按设备类型给出按键提示 */
   private renderOverlayLive(force = false): void {
     if (!force && this.overlayStep === this.step) return;
     this.overlayStep = this.step;
@@ -784,7 +777,7 @@ export class PracticeApp {
     const phone = dev?.kind === 'phone';
     const btnRecenter = phone ? '手机上的「回中」' : 'Joy-Con 的 Y 键';
     const btnConfirm = phone ? '手机上的「确认」' : 'Joy-Con 的 A 键';
-    const top = phone ? '手机顶端' : 'Joy-Con 的肩键一端';
+    const top = phone ? '手机顶端' : '肩键（R / ZR）那一端';
     const face = phone ? '屏幕' : '按键面';
     // Joy-Con 多一步「平放」
     const n0 = dev?.kind === 'joycon' ? 1 : 0;
@@ -795,13 +788,9 @@ export class PracticeApp {
            <p class="dim">这一步重新测陀螺仪零点，打球时画面里的拍子就不会慢慢转偏。之后打球中途把 Joy-Con 平放在桌上，也会自动重新测。</p>
            <div class="pr-progress"><i></i></div>
            <p class="pr-still-state dim">等你放好：按键面朝上平放，别碰它</p>`
-        : this.step === 'recenter'
-          ? `<h2>第 ${1 + n0} 步：回中</h2>
-           <p class="pr-big">把${top}<b>平着指向电视</b>，按${btnRecenter}。</p>
-           <p class="dim">之后打球时觉得方向不对，随时再按一次就行。</p>`
-          : `<h2>第 ${2 + n0} 步：准备姿势</h2>
-           <p class="pr-big">像握球拍一样握住${phone ? '手机' : 'Joy-Con'}：<b>${face}朝向电视</b>、拍头朝上（正手准备姿势），按${btnConfirm}。</p>
-           <p class="dim">这一步记下你的握法，用来判断拍面角度（拉上旋 / 搓下旋）。下次会自动沿用。</p>`;
+        : `<h2>第 ${1 + n0} 步：准备姿势</h2>
+           <p class="pr-big">把${phone ? '手机' : ' Joy-Con '}当成球拍：${top}是拍头，${face}是正手面（红面）。摆正手准备姿势，<b>${face}朝向电视</b>，按${btnConfirm}。</p>
+           <p class="dim">这一步定下电视的方向。打球中觉得拍子方向偏了，摆这个姿势按${btnRecenter}就能回中；等球时拿稳不动，游戏也会自动慢慢校正。</p>`;
     o.innerHTML = `
       <div class="pr-panel">
         ${body}
@@ -812,7 +801,7 @@ export class PracticeApp {
         </div>
       </div>`;
     o.querySelector('[data-act="skip-still"]')?.addEventListener('click', () => {
-      this.step = 'recenter';
+      this.step = 'ready';
       this.renderOverlay();
     });
     o.querySelector('[data-act="skip"]')?.addEventListener('click', () => {
@@ -903,30 +892,30 @@ export class PracticeApp {
 
   // ---------------------------------------------------------------- 平放（重新测陀螺仪零点）
 
-  /** 校准从哪一步开始：Joy-Con 先平放测零点，手机直接回中 */
+  /** 校准从哪一步开始：Joy-Con 先平放测零点，手机直接摆准备姿势 */
   private enterCalibration(): void {
     if (this.input.active?.kind === 'joycon') {
       this.step = 'still';
       this.stillSince = performance.now();
     } else {
-      this.step = 'recenter';
+      this.step = 'ready';
     }
   }
 
   private stillSince = 0;
 
-  /** 每帧：平放这一步的进度；测到新的零点就进入回中 */
+  /** 每帧：平放这一步的进度；测到新的零点就进入准备姿势 */
   private updateStillStep(): void {
     const dev = this.input.active;
     if (!dev || dev.kind !== 'joycon') {
-      this.step = 'recenter';
+      this.step = 'ready';
       this.renderOverlay();
       return;
     }
     if (dev.motion.biasLearnedAt > this.stillSince) {
       this.sfx.beep(880, 0.08);
       this.hud.flash('陀螺仪零点测好了', '', 1.0, 'good');
-      this.step = 'recenter';
+      this.step = 'ready';
       this.renderOverlay();
       return;
     }

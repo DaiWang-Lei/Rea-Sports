@@ -40,7 +40,7 @@ export interface PracticeSettingsLog {
 export type PracticeLogEvent =
   /** 仿真时间 st 对应真实时刻 rt */
   | { k: 'clock'; rt: number; st: number }
-  /** 球拍校准（回中的偏航、准备姿势记下的握法） */
+  /** 球拍校准：准备姿势 / 回中定下的偏航；握法（2026-10-23 起固定为 DEVICE_GRIP，以前在准备姿势时测出） */
   | { k: 'calib'; rt: number; hasHeading: boolean; yaw: number; grip: Q4 | null; handed: 1 | -1 }
   | { k: 'button'; rt: number; name: string }
   /** 中途改了设置（练习重新开始，仿真时间从 0 重新算） */
@@ -88,8 +88,19 @@ export type PracticeLogEvent =
   | { k: 'gyroBias'; rt: number; bias: V3; mode: string; learnedAt: number | null }
   /** 仿真事件原样（送球、落台、击球、挥空、未落台、结果…） */
   | { k: 'sim'; rt: number; st: number; e: FeederEvent }
-  /** 设备姿态（机体 → 融合世界系）与画面里的拍子朝向，约 10 次/秒 */
-  | { k: 'pose'; rt: number; q: Q4; face: V3 | null; blade: V3 | null };
+  /**
+   * 设备姿态（机体 → 融合世界系）与画面里的拍子朝向，约 10 次/秒。
+   * yaw：融合系 → 游戏系的偏航（弧度，含自动校正）；drift：估计的偏航漂移速度（弧度/秒）。2026-10-23 起才有
+   */
+  | {
+      k: 'pose';
+      rt: number;
+      q: Q4;
+      face: V3 | null;
+      blade: V3 | null;
+      yaw?: number;
+      drift?: number;
+    };
 
 export interface PracticeLog {
   version: 1;
