@@ -1,6 +1,6 @@
 /**
  * 手机 → 发球机练习 端到端冒烟测试（需要先 pnpm dev，走本地中转）：
- * 用 Node 模拟一台手机，立着摆正手准备姿势（顶端朝上、屏幕朝电视），按「确认」完成校准，
+ * 用 Node 模拟一台手机，屏幕朝上放平、顶端指向电视，按「确认」完成校准，
  * 然后在理想击球时刻附近合成一次正手挥拍（绕竖直轴逆时针转动），检查回球结果。
  * 同时测「录制这局」：暂停菜单里开始录制，打完后停止并下载，存到第二个参数给的路径。
  * 用法：pnpm smoke:practice-phone [截图路径] [录制文件路径]
@@ -54,7 +54,7 @@ send({
   gyroAxes: 'xyz',
 });
 
-// 机体系：立着、顶端朝上、屏幕朝电视 → 加速度 (1,0,0)，绕竖直轴的转动 = 机体 x
+// 机体系：屏幕朝上放平、顶端指向电视 → 加速度 (0,0,1)，绕竖直轴的转动 = 机体 z
 // home = true：按累计转过的角度慢慢转回准备姿势（172°/s，低于慢挥阈值），转完自动变回 false
 let seq = 0;
 let yawRate = 0; // 度/秒
@@ -70,8 +70,8 @@ const timer = setInterval(() => {
         type: 'imu',
         seq: seq++,
         t: Date.now() - tStart + 100000,
-        g: [r, 0, 0],
-        a: [1, 0, 0],
+        g: [0, 0, r],
+        a: [0, 0, 1],
       });
       return;
     }
@@ -82,8 +82,8 @@ const timer = setInterval(() => {
     type: 'imu',
     seq: seq++,
     t: Date.now() - tStart + 100000,
-    g: [yawRate, 0, 0],
-    a: [1, 0, 0],
+    g: [0, 0, yawRate],
+    a: [0, 0, 1],
   });
 }, 1000 / 60);
 
@@ -100,7 +100,7 @@ const state = () =>
     (window as unknown as { __practice: { debugState(): unknown } }).__practice.debugState()
   ) as Promise<St>;
 
-// 等页面进入「准备姿势」步骤
+// 等页面进入校准步骤
 for (let i = 0; i < 50 && (await state()).step === 'connect'; i++) await sleep(100);
 console.log(`连接后步骤：${(await state()).step}`);
 send({ type: 'btn', name: 'confirm', down: true });

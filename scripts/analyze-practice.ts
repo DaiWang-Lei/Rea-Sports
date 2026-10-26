@@ -1,6 +1,7 @@
 /**
- * 分析发球机练习录制（暂停菜单「录制这局」导出的 JSON）：
- *  - 每一球：理想击球时刻、每次挥拍的预测接触时刻（早晚多少毫秒）、判定结果、站位误差、最后结果；
+ * 分析发球机练习、比赛的录制（暂停菜单「录制这局」导出的 JSON）：
+ *  - 练习每一球：理想击球时刻、每次挥拍的预测接触时刻（早晚多少毫秒）、判定结果、站位误差、最后结果；
+ *  - 比赛每一分：抛球（按键 / 抖手柄的力度）、发球和每个来球的挥拍判定、这一分谁得分、为什么；
  *  - 汇总：时机分布（判定用到的那一下）、各种结果的次数、建议的画面延迟补偿；
  *  - 握法：固定握法，或旧录制里准备姿势时设备怎么拿（各轴在游戏坐标里的朝向）；打球时拍头 / 红面平均朝哪；
  *    电视方向的自动校正（2026-10-23 起）。
@@ -58,7 +59,7 @@ const AXES = [
 function analyze(file: string): void {
   const rec = JSON.parse(readFileSync(file, 'utf8')) as unknown;
   if (!isPracticeRecording(rec)) {
-    console.log(`${file}：不是发球机练习录制`);
+    console.log(`${file}：不是发球机练习或比赛的录制`);
     return;
   }
   const r = rec as PracticeRecording;
@@ -70,9 +71,13 @@ function analyze(file: string): void {
     L.deviceKind === 'phone'
       ? { '+X': '手机顶端', '+Y': '手机左侧', '+Z': '屏幕' }
       : { '+X': '肩键一端', '+Y': '导轨反侧（左）', '+Z': '按键面' };
-  console.log(`\n======== ${basename(file)}`);
+  const match = L.mode === 'match';
+  console.log(`\n======== ${basename(file)}${match ? '（比赛）' : ''}`);
   console.log(
-    `设备：${L.deviceName}（${L.deviceKind}）；难度 ${st.level}，落点 ${st.zone}，宽容度 ${st.leniency}；` +
+    `设备：${L.deviceName}（${L.deviceKind}）；` +
+      (match
+        ? `电脑等级 ${st.level}，${st.points ?? 6} 分制，宽容度 ${st.leniency}；`
+        : `难度 ${st.level}，落点 ${st.zone}，宽容度 ${st.leniency}；`) +
       `画面延迟补偿 ${st.latencyMs}ms${st.screen ? `（屏幕 ${st.screen}）` : ''}；时机窗口 H = ${H}ms，击中 τ ∈ [${st.tauMin}, ${st.tauMax}]` +
       `（早 ${f0(-st.tauMin * H)}ms ～ 晚 ${f0(st.tauMax * H)}ms），挥早挂起 ${st.holdEarly}s`
   );
@@ -125,6 +130,13 @@ function analyze(file: string): void {
       `电视方向：录制中自动校正 / 回中累计转了 ${f0(turn)}°（${f0((b.rt - a.rt) / 1000)} 秒）；` +
         `估计的偏航漂移速度 开始 ${f2(a.drift * D)}°/s，最后 ${f2(b.drift * D)}°/s`
     );
+    // 2026-10-26 起：校准（拍头指向电视）后学到的平时准备姿势的拍面角度，自动校正保持这个角度
+    if (b.ready) {
+      const deg = (v: number | null) => (v === null ? '还没学到' : `${f0(v * D)}°`);
+      console.log(
+        `平时准备姿势的拍面角度（相对电视，逆时针为正）：红面朝前 ${deg(b.ready[0])}，背面朝前 ${deg(b.ready[1])}`
+      );
+    }
   }
   const poses = ev.filter((e): e is Ev<'pose'> => e.k === 'pose' && !!e.blade && !!e.face);
   if (poses.length) {
@@ -146,6 +158,11 @@ function analyze(file: string): void {
       `打球时（${poses.length} 个采样）画面里：拍头平均朝 ${dirText(blade)}，离竖直 ${tilt.toFixed(0)}°；` +
         `红面平均朝 ${dirText(face)}`
     );
+  }
+
+  if (match) {
+    analyzeMatch(ev, st.latencyMs);
+    return;
   }
 
   // ---- 每一球
@@ -248,6 +265,182 @@ function analyze(file: string): void {
         `  → 整体偏${med > 0 ? '晚' : '早'}：画面延迟补偿可以试 ${f0(st.latencyMs + med)}ms（现在 ${st.latencyMs}ms）`
       );
     }
+  }
+}
+
+function swingOutcomeText(s: Ev<'swing'>): string {
+  const o = s.outcome;
+  return o.type === 'hit'
+    ? `击中（${o.stroke === 'fh' ? '正手' : '反手'}）`
+    : o.type === 'held'
+      ? `挂起（${o.miss.type === 'volley' ? '未落台' : '挥早'}，可被取代）`
+      : o.type === 'whiff'
+        ? o.reason === 'early'
+          ? '挥早'
+          : '挥晚'
+        : o.type === 'volley'
+          ? '未落台'
+          : '忽略';
+}
+
+function swingLine(s: Ev<'swing'>, idealT: number): string {
+  const rel = (s.input.tContact - idealT) * 1000;
+  const det = (s.input.tDetect - idealT) * 1000;
+  const dir = s.input.dir > 0 ? '逆时针' : s.input.dir < 0 ? '顺时针' : '上下';
+  return (
+    `挥拍 #${s.input.id}（${s.input.path}，${dir}，${s.input.wPeak.toFixed(0)} rad/s，` +
+    `竖直占比 ${f2(s.input.yawFrac)}）确认 ${sgnMs(det)}，预测 ${sgnMs(rel)} → ${swingOutcomeText(s)}`
+  );
+}
+
+const WHIFF_TEXT: Record<string, string> = {
+  early: '挥早',
+  late: '挥晚',
+  reach: '够不着',
+  volley: '未落台',
+};
+
+const REASON_TEXT: Record<string, string> = {
+  serveFault: '发球失误',
+  net: '下网',
+  out: '出界',
+  ownSide: '落在本方',
+  doubleBounce: '两跳',
+  missed: '没接到',
+  volley: '未落台击球',
+};
+
+/**
+ * 比赛：按分列出你的抛球、发球挥拍、每个来球的挥拍判定。
+ * 来球用理想击球点（plan 事件）分组：落台时刻变了就是新的来球（擦网等重新规划时落台时刻基本不变）
+ */
+function analyzeMatch(ev: PracticeLogEvent[], latencyMs: number): void {
+  type Incoming = { plan: Ev<'plan'>; swings: Ev<'swing'>[] };
+  type Point = {
+    tosses: Ev<'toss'>[];
+    /** 发球：抛球后的挥拍（理想时刻记在抛球事件里） */
+    serveSwings: Ev<'swing'>[];
+    incoming: Incoming[];
+    hits: Extract<Ev<'match'>['e'], { type: 'hit' }>[];
+    whiffs: Extract<Ev<'match'>['e'], { type: 'whiff' }>[];
+    end: Extract<Ev<'match'>['e'], { type: 'point' | 'replay' }> | null;
+  };
+  const newPoint = (): Point => ({
+    tosses: [],
+    serveSwings: [],
+    incoming: [],
+    hits: [],
+    whiffs: [],
+    end: null,
+  });
+  const points: Point[] = [];
+  let cur = newPoint();
+  let serving = false;
+  for (const e of ev) {
+    if (e.k === 'toss') cur.tosses.push(e);
+    else if (e.k === 'plan') {
+      const last = cur.incoming[cur.incoming.length - 1];
+      if (last && Math.abs(last.plan.bounceT - e.bounceT) < 0.05) last.plan = e;
+      else cur.incoming.push({ plan: e, swings: [] });
+      serving = false;
+    } else if (e.k === 'swing') {
+      if (serving) cur.serveSwings.push(e);
+      else cur.incoming[cur.incoming.length - 1]?.swings.push(e);
+    } else if (e.k === 'match') {
+      const m = e.e;
+      if (m.type === 'toss' && m.side === 'near') serving = true;
+      else if (m.type === 'hit' && m.side === 'near') {
+        cur.hits.push(m);
+        if (m.serve) serving = false;
+      } else if (m.type === 'whiff' && m.side === 'near') cur.whiffs.push(m);
+      else if (m.type === 'point' || m.type === 'replay') {
+        cur.end = m;
+        points.push(cur);
+        cur = newPoint();
+        serving = false;
+      }
+    }
+  }
+  if (cur.tosses.length || cur.incoming.length) points.push(cur);
+
+  const rally: number[] = [];
+  const serveT: number[] = [];
+  const whiffCount = new Map<string, number>();
+  console.log(
+    `\n逐分（挥拍时刻相对理想击球时刻，毫秒；「预测」= 预测接触时刻，已扣画面延迟补偿）：`
+  );
+  points.forEach((p, i) => {
+    const end = p.end;
+    const head =
+      end?.type === 'point'
+        ? `${end.winner === 'near' ? '你得分' : '电脑得分'}（${REASON_TEXT[end.reason] ?? end.reason}），回合 ${end.rallyHits} 拍，比分 ${end.score.near}:${end.score.far}`
+        : end?.type === 'replay'
+          ? '中断重打'
+          : '（没打完）';
+    console.log(`  第 ${i + 1} 分：${head}`);
+    for (const t of p.tosses) {
+      const how =
+        t.source === 'flick'
+          ? `抖手柄 ${f2(t.peakG ?? NaN)}G（${f0(t.durationMs ?? NaN)}ms，最大 ${f2(t.maxOmega ?? NaN)} rad/s）`
+          : t.source === 'key'
+            ? '空格'
+            : '按键';
+      console.log(
+        `    抛球：${how} → 高 ${f2(t.height)}m${t.ok ? '' : '（没抛：不是你发球 / 还不能抛）'}`
+      );
+    }
+    for (const h of p.hits) {
+      if (!h.human) continue;
+      if (h.serve) serveT.push(h.human.timingMs);
+      else rally.push(h.human.timingMs);
+    }
+    const ideal = [...p.tosses].reverse().find((t) => t.ok)?.ideal;
+    for (const s of p.serveSwings) {
+      console.log(
+        `    发球${ideal === undefined ? `挥拍 #${s.input.id} → ${swingOutcomeText(s)}` : swingLine(s, ideal)}`
+      );
+    }
+    p.incoming.forEach((b, j) => {
+      console.log(`    来球 ${j + 1}：落台 → 理想击球 ${f0((b.plan.t - b.plan.bounceT) * 1000)}ms`);
+      for (const s of b.swings) console.log(`      ${swingLine(s, b.plan.t)}`);
+      if (!b.swings.length) console.log('      （没挥拍）');
+    });
+    for (const w of p.whiffs) {
+      const k = WHIFF_TEXT[w.reason ?? ''] ?? '挥空';
+      whiffCount.set(k, (whiffCount.get(k) ?? 0) + 1);
+      console.log(
+        `    挥空：${k}${w.timingMs !== undefined ? ` ${sgnMs(w.timingMs)}ms` : ''}${w.serve ? '（发球）' : ''}`
+      );
+    }
+  });
+
+  const won = points.filter((p) => p.end?.type === 'point' && p.end.winner === 'near').length;
+  const lost = points.filter((p) => p.end?.type === 'point' && p.end.winner === 'far').length;
+  console.log(
+    `\n得分 ${won}，失分 ${lost}；挥空：${[...whiffCount.entries()].map(([k, v]) => `${k} ${v}`).join('，') || '没有'}`
+  );
+  const tosses = ev.filter((e): e is Ev<'toss'> => e.k === 'toss');
+  const flicks = tosses.filter((t) => t.source === 'flick');
+  if (tosses.length) {
+    console.log(
+      `抛球 ${tosses.length} 次：抖手柄 ${flicks.length} 次` +
+        (flicks.length ? `（峰值 ${flicks.map((t) => f2(t.peakG ?? NaN)).join(' / ')}G）` : '') +
+        `，按键 ${tosses.length - flicks.length} 次`
+    );
+  }
+  if (rally.length) {
+    const med = median(rally);
+    console.log(
+      `回球 ${rally.length} 拍：时机 中位 ${sgnMs(med)}ms，平均 ${sgnMs(mean(rally))}ms，标准差 ${f0(sd(rally))}ms`
+    );
+    if (Math.abs(med) > 25) {
+      console.log(
+        `  → 整体偏${med > 0 ? '晚' : '早'}：画面延迟补偿可以试 ${f0(latencyMs + med)}ms（现在 ${latencyMs}ms）`
+      );
+    }
+  }
+  if (serveT.length) {
+    console.log(`发球 ${serveT.length} 次：时机 中位 ${sgnMs(median(serveT))}ms`);
   }
 }
 

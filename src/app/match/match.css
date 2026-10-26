@@ -1,0 +1,52 @@
+/* 和电脑对打：沿用练习页的面板样式（practice.css），这里只有比赛特有的部分 */
+
+.mt-timing {
+  position: absolute;
+  left: 50%;
+  bottom: 9vh;
+  transform: translateX(-50%);
+  pointer-events: none;
+  font-size: 2.2vh;
+  font-weight: 600;
+  background: rgba(10, 16, 24, 0.6);
+  border-radius: 999px;
+  padding: 0.6vh 1.6vw;
+  white-space: nowrap;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.mt-timing.show {
+  opacity: 0.95;
+}
+
+.mt-panel .pr-panel {
+  width: min(640px, 100%);
+}
+
+.mt-blurb {
+  margin: 4px 0 0;
+}
+
+.mt-result {
+  font-size: 30px !important;
+}
+
+.mt-result.ok {
+  color: #7cf0b0;
+}
+
+.mt-result.bad {
+  color: #ff9a8a;
+}
+
+.mt-final {
+  font-size: 22px;
+  margin-bottom: 10px;
+}
+
+.mt-final b {
+  font-size: 34px;
+  padding: 0 4px;
+}

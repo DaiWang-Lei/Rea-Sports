@@ -1,10 +1,11 @@
 /**
  * Joy-Con → 发球机练习 端到端冒烟测试（需要先 pnpm dev；不需要真手柄）：
  * 在页面里插一个模拟 Joy-Con（?debug=1 暴露的实例），每 15ms 送 3 个样本（和真手柄一样），陀螺带一点零点偏差。
- * 流程：平放 → 学到零点 → 立起来摆准备姿势（肩键一端朝上、按键面朝电视）按 A → 在理想击球时刻附近
- * 合成正手挥拍（绕竖直轴逆时针转）。
- * 检查：平放这一步能走完、学到的零点接近设定的偏差、校准后画面里拍头朝上红面朝前、能正常回球、页面没有报错。
- * 用法：pnpm smoke:practice-joycon [截图路径]（平放那一步另存一张 *-still.png）
+ * 流程：平放（按键面朝上、肩键一端指向模拟的电视）→ 按住 X + R（直接调组合键的同一个入口 requestCalibration：
+ * 零点还没测好就等测好）→ 立起来 → 在理想击球时刻附近合成正手挥拍（绕竖直轴逆时针转）。
+ * 检查：校准能完成、学到的零点接近设定的偏差、校准后画面里拍头朝前红面朝上、能正常回球、
+ * 自动校正没有乱拉方向、页面没有报错。
+ * 用法：pnpm smoke:practice-joycon [截图路径]（校准那一步另存一张 *-point.png）
  */
 import { chromium } from 'playwright-core';
 
@@ -45,24 +46,29 @@ await page.evaluate(`(() => {
   window.__home = false;
   let tilt = 0;
   let yawAcc = 0;
+  // 转角按样本时间戳累计，和融合算法一致：定时器常常晚到，样本间隔不总是 5ms；融合把单个间隔限制在 0.5–50ms
+  let lastT = performance.now();
   setInterval(() => {
     const now = performance.now();
     const r = () => (Math.random() - 0.5) * 0.6;
     const samples = [2, 1, 0].map((k) => {
+      const t = now - k * 5;
       // 每个样本 5ms，转 1.5°（300°/s）；竖直轴在机体系里是 (sin a, 0, cos a)
       let wy = 0;
       if (tilt < window.__upright) { tilt = Math.min(window.__upright, tilt + 5 / 300); wy = -300; }
       else if (tilt > window.__upright) { tilt = Math.max(window.__upright, tilt - 5 / 300); wy = 300; }
       const a = (tilt * Math.PI) / 2;
       const up = { x: Math.sin(a), z: Math.cos(a) };
+      const dt = Math.min(0.05, Math.max(0.0005, (t - lastT) / 1000));
+      lastT = t;
       let yr = window.__yawDps;
       if (window.__home && yr === 0) {
-        if (Math.abs(yawAcc) > 0.2) yr = -Math.sign(yawAcc) * Math.min(172, Math.abs(yawAcc) / 0.005);
+        if (Math.abs(yawAcc) > 0.2) yr = -Math.sign(yawAcc) * Math.min(172, Math.abs(yawAcc) / dt);
         else window.__home = false;
       }
-      yawAcc += yr * 0.005;
+      yawAcc += yr * dt;
       return {
-        t: now - k * 5,
+        t,
         gyro: { x: bias.x + up.x * yr + r(), y: bias.y + wy + r(), z: bias.z + up.z * yr + r() },
         accel: { x: up.x + r() * 0.01, y: r() * 0.01, z: up.z + r() * 0.01 },
         clipped: false,
@@ -84,23 +90,17 @@ const state = () =>
   page.evaluate(() =>
     (window as unknown as { __practice: { debugState(): unknown } }).__practice.debugState()
   ) as Promise<St>;
-const press = (b: string) =>
-  page.evaluate(
-    (name) =>
-      (window as unknown as { __practice: { onButton(n: string): void } }).__practice.onButton(
-        name
-      ),
-    b
-  );
 
 for (let i = 0; i < 30 && (await state()).step === 'connect'; i++) await sleep(100);
 console.log(`连接后步骤：${(await state()).step}`);
 const t0 = Date.now();
-await sleep(1200);
-await page.screenshot({ path: shot.replace(/(\.png)?$/, '-still.png') });
-for (let i = 0; i < 60 && (await state()).step === 'still'; i++) await sleep(100);
+await sleep(500);
+await page.screenshot({ path: shot.replace(/(\.png)?$/, '-point.png') });
+// 平放指向电视，按住 X + R：零点还没测好时校准会等测好（约 2 秒）再完成
+await page.evaluate('window.__practice.input.requestCalibration()');
+for (let i = 0; i < 60 && (await state()).step === 'point'; i++) await sleep(100);
 console.log(
-  `平放后步骤：${(await state()).step}（用了 ${((Date.now() - t0) / 1000).toFixed(1)}s）`
+  `校准后步骤：${(await state()).step}（用了 ${((Date.now() - t0) / 1000).toFixed(1)}s）`
 );
 const bias = await page.evaluate(() => {
   const app = (
@@ -111,12 +111,6 @@ const bias = await page.evaluate(() => {
 console.log(
   `学到的零点：(${bias.x.toFixed(2)}, ${bias.y.toFixed(2)}, ${bias.z.toFixed(2)})，设定 (${BIAS.x}, ${BIAS.y}, ${BIAS.z})`
 );
-// 立起来：肩键一端朝上、按键面朝（模拟的）电视，按 A
-await page.evaluate('window.__upright = 1');
-await sleep(700);
-await press('confirm');
-await sleep(200);
-console.log(`校准后步骤：${(await state()).step}`);
 type Pose = {
   face: { x: number; y: number; z: number };
   blade: { x: number; y: number; z: number };
@@ -124,12 +118,16 @@ type Pose = {
 const pose = (await page.evaluate(
   '(() => { const p = window.__practice.input.active.paddle; return { face: p.faceNormal(), blade: p.bladeUp() }; })()'
 )) as Pose;
-const poseOk = pose.face.y > 0.95 && pose.blade.z > 0.95;
+// 还平放着：拍头应该朝前（指向电视）、红面朝上
+const poseOk = pose.blade.y > 0.95 && pose.face.z > 0.95;
 const yaw0 = (await page.evaluate('window.__practice.input.active.paddle.yaw')) as number;
 console.log(
-  `校准后画面里：红面 (${pose.face.x.toFixed(2)}, ${pose.face.y.toFixed(2)}, ${pose.face.z.toFixed(2)})，` +
-    `拍头 (${pose.blade.x.toFixed(2)}, ${pose.blade.y.toFixed(2)}, ${pose.blade.z.toFixed(2)})：${poseOk ? '对' : '不对'}`
+  `校准后画面里：拍头 (${pose.blade.x.toFixed(2)}, ${pose.blade.y.toFixed(2)}, ${pose.blade.z.toFixed(2)})，` +
+    `红面 (${pose.face.x.toFixed(2)}, ${pose.face.y.toFixed(2)}, ${pose.face.z.toFixed(2)})：${poseOk ? '对' : '不对'}`
 );
+// 拿起来立着打：肩键一端朝上
+await page.evaluate('window.__upright = 1');
+await sleep(700);
 
 /** 合成一次正手：每 15ms 一档，角速度升到 20 rad/s 再回落；dir = +1 逆时针 */
 async function forehand() {

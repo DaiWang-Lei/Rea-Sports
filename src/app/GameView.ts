@@ -33,6 +33,9 @@ export class GameView {
   readonly sfx = new Sfx();
   sim: MatchSim;
   timeScale = 1;
+  /** 暂停：照常渲染，但不推进仿真 */
+  paused = false;
+  private names: HudNames;
   private acc = 0;
   private prev: Snapshot;
   private shakeUntil = 0;
@@ -47,6 +50,7 @@ export class GameView {
     canvas.className = 'game-canvas';
     container.appendChild(canvas);
     this.renderer = new Renderer(canvas);
+    this.names = opts.names;
     this.hud = new Hud(container, opts.names);
     this.sim = sim;
     this.prev = this.snapshot();
@@ -57,6 +61,16 @@ export class GameView {
     this.acc = 0;
     this.prev = this.snapshot();
     this.hud.clearFlash();
+  }
+
+  setNames(names: HudNames): void {
+    this.names = names;
+    this.hud.setNames(names);
+  }
+
+  /** 还没推进的真实时间（秒）：画面上的仿真时刻 = sim.t − lag（换算输入时间用） */
+  get lag(): number {
+    return this.acc;
   }
 
   private snapshot(): Snapshot {
@@ -73,7 +87,7 @@ export class GameView {
 
   /** 每帧调用：推进仿真（最多 12 步，避免卡顿后狂追），处理事件，渲染 */
   frame(dtReal: number): void {
-    this.acc += Math.max(0, Math.min(0.1, dtReal)) * this.timeScale;
+    if (!this.paused) this.acc += Math.max(0, Math.min(0.1, dtReal)) * this.timeScale;
     let steps = 0;
     while (this.acc >= SIM_DT && steps < 12) {
       this.prev = this.snapshot();
@@ -132,8 +146,7 @@ export class GameView {
       s.phase.kind === 'gameOver' ||
       (s.phase.kind === 'preServe' && s.t - s.phase.since < 1.5);
     const gp = s.scoring.gamePointFor;
-    const label =
-      s.phase.kind === 'gameOver' ? '比赛结束' : gp ? '局点' : s.scoring.isDeuce ? '平分' : '';
+    const label = s.result ? '比赛结束' : gp ? '局点' : s.scoring.isDeuce ? '平分' : '';
     this.hud.showScore(
       s.scoring.score,
       s.phase.kind === 'gameOver' ? null : s.server,
@@ -171,7 +184,7 @@ export class GameView {
       case 'point': {
         this.sfx.setEcho(0);
         this.sfx.crowd('cheer', e.rallyHits >= 8 ? 1 : 0.6);
-        const who = e.winner === 'near' ? this.opts.names.near : this.opts.names.far;
+        const who = e.winner === 'near' ? this.names.near : this.names.far;
         this.hud.flash(
           REASON_TEXT[e.reason],
           `${who}得分`,
@@ -183,11 +196,14 @@ export class GameView {
       case 'let':
         this.hud.flash('擦网', '重新发球', 1.2);
         break;
+      case 'replay':
+        this.hud.flash('这一分重打', '', 1.2);
+        break;
       case 'gameOver': {
         const text =
           e.result === 'draw'
             ? '平局'
-            : `${e.result === 'near' ? this.opts.names.near : this.opts.names.far}获胜`;
+            : `${e.result === 'near' ? this.names.near : this.names.far}获胜`;
         this.hud.flash(text, `${e.score.near} : ${e.score.far}`, 0, 'big');
         this.sfx.crowd('cheer', 1);
         break;

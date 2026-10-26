@@ -64,6 +64,15 @@ export class Referee {
     return { type: 'point', winner, reason };
   }
 
+  /**
+   * 犯规（玩家的未落台击球：判定比挥拍晚一点，见 HitResolver 的挂起）：回合还在进行就直接判给对方。
+   * 不走 feed({ type: 'hit' })，因为判定时球可能已经在本方弹起，那样会被当成合法回球
+   */
+  foul(side: Side, reason: PointReason): RefereeOutput {
+    if (this.state === 'idle') return CONTINUE;
+    return this.point(otherSide(side), reason);
+  }
+
   feed(input: RefereeInput): RefereeOutput {
     const server = this.server;
     const receiver = otherSide(server);

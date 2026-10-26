@@ -36,7 +36,8 @@ describe('拍面角度以平时的击球角度为基准', () => {
     expect(m.neutralPitch('bh')).toBe(0);
     for (let i = 0; i < 4; i++) m.recordContact('bh', -10 * DEG);
     expect(m.neutralPitch('bh') / DEG).toBeCloseTo(-10, 6);
-    expect(m.setHeading(quat())).toBe(true);
+    // 单位握法下拍头 = 机体 +Z：绕 x 转 −90° 让拍头水平（指向 +y）
+    expect(m.setHeading(fromAxisAngle(1, 0, 0, -Math.PI / 2))).toBe(true);
     expect(m.neutralPitch('fh') / DEG).toBeCloseTo(40, 6);
     expect(m.neutralPitch('bh') / DEG).toBeCloseTo(-10, 6);
   });

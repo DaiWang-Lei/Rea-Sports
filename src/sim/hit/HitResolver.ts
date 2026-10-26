@@ -285,13 +285,41 @@ function incomingTopspin(v: Vec3, w: Vec3): number {
   return w.x * (-v.y / d) + w.y * (v.x / d);
 }
 
+/** 力度 0..1：峰值角速度 5 → 22 rad/s */
+export function swingPower(wPeak: number): number {
+  return clamp((wPeak - MIN_W) / (FULL_W - MIN_W), 0, 1);
+}
+
+/**
+ * 上下旋程度 σ（−1..1，正 = 上旋）：拍面俯仰（以平时的角度为基准）为主，翻腕、刷球方向为辅；
+ * |σ| < 0.15 算不转。宽容度越大，俯仰的死区越宽
+ */
+export function spinSigma(ft: SwingFeatures, leniency: number): number {
+  const f = clamp(leniency, 0, 1);
+  const thr = 6 * DEG + 15 * DEG * f * 0.5;
+  const beta = ft.facePitch;
+  const sigmaFace = Number.isNaN(beta)
+    ? 0
+    : -Math.sign(beta) * clamp((Math.abs(beta) - thr) / (24 * DEG), 0, 1);
+  const sigmaTwist = Number.isNaN(ft.pitchChange) ? 0 : clamp(-ft.pitchChange / (25 * DEG), -1, 1);
+  const sigmaBrush = Number.isNaN(ft.brush) ? 0 : clamp(ft.brush / (35 * DEG), -1, 1);
+  const sigma = clamp(0.7 * sigmaFace + 0.3 * sigmaTwist + 0.25 * sigmaBrush, -1, 1);
+  return Math.abs(sigma) < 0.15 ? 0 : sigma;
+}
+
+/** 侧旋程度（−1..1）：绕前进方向的转动；s = +1 正手、−1 反手（以击球者自己的左右为准） */
+export function sideSpinAmount(ft: SwingFeatures, s: number): number {
+  const roll = Number.isNaN(ft.roll) ? 0 : ft.roll;
+  return Math.sign(roll) * clamp((Math.abs(roll) - 5) / 9, 0, 1) * s;
+}
+
 export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
   const dir = sideDir(ctx.side);
   const rs = rightSign(ctx.side);
   const m = tune.mover;
   const f = clamp(ctx.leniency, 0, 1);
   const noise = 1.3 - 0.6 * f;
-  const q = clamp((ctx.wPeak - MIN_W) / (FULL_W - MIN_W), 0, 1);
+  const q = swingPower(ctx.wPeak);
   // 以击球者自己的左右为准：s = +1 正手，−1 反手；左手玩家整体镜像
   const s = (ctx.stroke === 'fh' ? 1 : -1) * ctx.handed;
   const xSelf = (ctx.contact.x * rs) / TABLE.halfWidth;
@@ -337,18 +365,10 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
 
   // ---- 旋转
   const ft = ctx.features;
-  const thr = 6 * DEG + 15 * DEG * f * 0.5;
   const beta = ft.facePitch;
-  const sigmaFace = Number.isNaN(beta)
-    ? 0
-    : -Math.sign(beta) * clamp((Math.abs(beta) - thr) / (24 * DEG), 0, 1);
-  const sigmaTwist = Number.isNaN(ft.pitchChange) ? 0 : clamp(-ft.pitchChange / (25 * DEG), -1, 1);
-  const sigmaBrush = Number.isNaN(ft.brush) ? 0 : clamp(ft.brush / (35 * DEG), -1, 1);
-  let sigma = clamp(0.7 * sigmaFace + 0.3 * sigmaTwist + 0.25 * sigmaBrush, -1, 1);
-  if (Math.abs(sigma) < 0.15) sigma = 0;
+  const sigma = spinSigma(ft, f);
   const topspin = sigma > 0 ? 40 + 220 * sigma * (0.6 + 0.4 * q) : 30 + 230 * sigma;
-  const roll = Number.isNaN(ft.roll) ? 0 : ft.roll;
-  const sidespin = Math.sign(roll) * clamp((Math.abs(roll) - 5) / 9, 0, 1) * 170 * s;
+  const sidespin = 170 * sideSpinAmount(ft, s);
 
   // ---- 速度
   const vInH = Math.hypot(ctx.vIn.x, ctx.vIn.y);

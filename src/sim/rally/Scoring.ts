@@ -53,8 +53,9 @@ export class Scoring {
     return null;
   }
 
-  /** 哪一方再得 1 分就赢（局点） */
+  /** 哪一方再得 1 分就赢（局点）；已经分出胜负时没有局点 */
   get gamePointFor(): Side | null {
+    if (this.result) return null;
     for (const s of ['near', 'far'] as const) {
       const me = this.score[s] + 1;
       const op = this.score[otherSide(s)];

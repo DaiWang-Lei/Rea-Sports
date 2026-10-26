@@ -3,6 +3,7 @@ import './app.css';
 import { cpuLevel } from '@/config/difficulty';
 import { MatchSim } from '@/sim/MatchSim';
 import { GameView } from './GameView';
+import { MatchApp } from './match/MatchApp';
 import { PracticeApp } from './practice/PracticeApp';
 
 const params = new URLSearchParams(location.search);
@@ -81,6 +82,10 @@ function showMenu(): void {
       <h1>体感乒乓</h1>
       <p class="dim">手感对标 Wii Sports Resort 乒乓球的净室重做 · 开发中</p>
       <div class="menu-items">
+        <a class="menu-item" href="?mode=match">
+          <strong>和电脑对打（手机 / Joy-Con / 键盘）</strong>
+          <span>M3：5 个等级的电脑对手，6 分或 11 分一局。按 A 或向上抖手柄抛球发球</span>
+        </a>
         <a class="menu-item" href="?mode=practice">
           <strong>发球机练习（手机 / Joy-Con / 键盘）</strong>
           <span>M2：真正用挥拍回球。每一球告诉你早了还是晚了、正手还是反手、力度和旋转</span>
@@ -102,11 +107,12 @@ function showMenu(): void {
           <span>节奏更快、回合更长</span>
         </a>
       </div>
-      <p class="dim small">和电脑对打（M2/M3）开发中。可加参数：a、b = 两边电脑等级 1–5，points = 6 或 11，speed = 慢放倍率（如 0.3）。</p>
+      <p class="dim small">自动演示可加参数：a、b = 两边电脑等级 1–5，points = 6 或 11，speed = 慢放倍率（如 0.3）。</p>
     </div>`;
 }
 
 const mode = params.get('mode');
 if (mode === 'autoplay') startAutoplay();
+else if (mode === 'match') new MatchApp(app);
 else if (mode === 'practice') new PracticeApp(app);
 else showMenu();

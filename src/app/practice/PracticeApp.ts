@@ -1,18 +1,14 @@
 /**
- * 发球机练习页：连接设备 →（Joy-Con）平放测零点 → 准备姿势（定电视方向）→ 发球机送球，玩家挥拍回球。
+ * 发球机练习页：连接设备 → 校准（拍头指向电视；Joy-Con 平放在桌上按住 X + R，同时测零点）→ 发球机送球，玩家挥拍回球。
  * 每一球给出结果卡片（时机早晚、正反手、力度、旋转），可以调难度、落点区域和画面延迟补偿。
  */
 import './practice.css';
-import QRCode from 'qrcode';
 import { Sfx } from '@/audio/Sfx';
-import { tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
-import { rotate } from '@/core/quat';
-import { normalize, type Vec3, vec3 } from '@/core/vec3';
+import { type Vec3, vec3 } from '@/core/vec3';
 import type { SwingCommit } from '@/input/paddle/SwingDetector';
-import { NO_FEATURES, type SwingInput, type SwingOutcome } from '@/sim/hit/HitResolver';
-import { SIM_DT, TABLE } from '@/sim/constants';
-import { forehandSign } from '@/sim/players/PlayerSim';
+import type { SwingInput, SwingOutcome } from '@/sim/hit/HitResolver';
+import { SIM_DT } from '@/sim/constants';
 import {
   FEED_RESULT_TEXT,
   type FeederEvent,
@@ -23,49 +19,42 @@ import {
   type WhiffReason,
 } from '@/sim/practice/FeederSim';
 import { SHOT_KIND_TEXT } from '@/sim/shot/ShotSpec';
-import { cpuPaddle, type PaddlePose } from '@/render/paddlePose';
 import { Renderer } from '@/render/Renderer';
 import { Hud } from '@/ui/Hud';
-import { type InputDevice, MotionInput } from '../input/MotionInput';
+import { MotionInput, type SwingEventOut } from '../input/MotionInput';
+import { latencyMs, screenKey, setLatencyMs } from '../shared/latency';
+import { deviceLine, deviceSwingInput, humanPaddle, keySwingInput } from '../shared/motionPlay';
+import { deviceWords, SetupFlow } from '../shared/SetupFlow';
 import {
-  commitLog,
+  calibLog,
   downloadJson,
   type PracticeSettingsLog,
   PracticeRecorder,
-  q4,
   RECORD_MAX_BALLS,
   RECORD_MAX_MS,
+  RecordTicker,
+  swingLog,
   v3,
 } from './PracticeRecorder';
 
+// 画面延迟补偿按屏幕记，练习和比赛共用（见 shared/latency；以前存在这里的 latencyByScreen 会被搬过去）
 interface Settings {
   level: FeedLevel;
   zone: FeedZone;
-  /** 画面延迟补偿（毫秒），按屏幕分别记：Mac 自带屏和电视的延迟差很多（键见 screenKey） */
-  latencyByScreen: Record<string, number>;
   leniency: number;
 }
 
 const SETTINGS_KEY = 'rea-practice';
 
-/** 浏览器窗口所在的屏幕，按分辨率区分（镜像显示时分不出来） */
-export function screenKey(): string {
-  const r = window.devicePixelRatio || 1;
-  return `${screen.width}×${screen.height}${r !== 1 ? ` @${r}x` : ''}`;
-}
-
 function loadSettings(): Settings {
-  const def: Settings = { level: 1, zone: 'mixed', latencyByScreen: {}, leniency: 0.6 };
+  const def: Settings = { level: 1, zone: 'mixed', leniency: 0.6 };
   try {
-    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as
-      (Partial<Settings> & { latencyMs?: number }) | null;
-    const { latencyMs: old, ...rest } = s ?? {};
-    const out: Settings = { ...def, ...rest, latencyByScreen: { ...(rest.latencyByScreen ?? {}) } };
-    // 旧版只记了一个值：算作当前这块屏幕的
-    if (typeof old === 'number' && !(screenKey() in out.latencyByScreen)) {
-      out.latencyByScreen[screenKey()] = old;
-    }
-    return out;
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
+    return {
+      level: s?.level ?? def.level,
+      zone: s?.zone ?? def.zone,
+      leniency: s?.leniency ?? def.leniency,
+    };
   } catch {
     return def;
   }
@@ -73,13 +62,15 @@ function loadSettings(): Settings {
 
 function saveSettings(s: Settings): void {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    const old = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') as object;
+    // 保留旧的延迟字段：shared/latency 第一次读取时从这里搬
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...old, ...s }));
   } catch {
     // 不保存
   }
 }
 
-type Step = 'connect' | 'still' | 'ready' | 'play';
+type Step = 'connect' | 'point' | 'play';
 
 const LEVEL_TEXT: Record<FeedLevel, string> = { 1: '入门', 2: '进阶', 3: '高手' };
 const ZONE_TEXT: Record<FeedZone, string> = { mixed: '全台', fh: '只送正手', bh: '只送反手' };
@@ -103,7 +94,7 @@ export class PracticeApp {
   private readonly input = new MotionInput();
   private sim: FeederSim;
   private settings = loadSettings();
-  private step: Step = 'connect';
+  private readonly setup: SetupFlow;
   private keyboard = false;
   private paused = false;
 
@@ -118,9 +109,7 @@ export class PracticeApp {
 
   // 「录制这局」
   private rec: PracticeRecorder | null = null;
-  private lastClockLog = 0;
-  private lastPoseLog = 0;
-  private lastBiasLog = NaN;
+  private recTicker = new RecordTicker();
   private lastPlan: object | null = null;
 
   // DOM
@@ -155,6 +144,12 @@ export class PracticeApp {
     this.swingEl = root.querySelector('.pr-swing')!;
     this.overlay = root.querySelector('.pr-overlay')!;
     this.pauseEl = root.querySelector('.pr-pause')!;
+    this.setup = new SetupFlow(this.overlay, this.input, this.hud, this.sfx, {
+      title: '发球机练习',
+      keyboardHelp: 'F 正手、J 反手，按键时机 = 击球时机。',
+      onDone: (msg) => this.startPlay(msg),
+      onKeyboard: () => this.startKeyboard(),
+    });
 
     this.input.events = {
       onSwing: (e) => this.onDeviceSwing(e),
@@ -177,11 +172,12 @@ export class PracticeApp {
       onRawSample: (d, sample) => {
         if (this.rec?.device === d) this.rec.imu.addSample(sample);
       },
-      onDevicesChanged: () => this.renderOverlay(),
-      onLinkStatus: (text, ok) => {
-        this.linkStatus = { text, ok };
-        this.renderOverlay();
+      onCalibrate: (_d, result) => {
+        this.setup.onCalibrate(result);
+        if (result === 'done') this.logCalib();
       },
+      onDevicesChanged: () => this.setup.render(),
+      onLinkStatus: (text, ok) => this.setup.setLinkStatus(text, ok),
     };
     window.addEventListener('keydown', (e) => {
       this.keysDown.add(e.key.toLowerCase());
@@ -189,9 +185,9 @@ export class PracticeApp {
     });
     window.addEventListener('keyup', (e) => this.keysDown.delete(e.key.toLowerCase()));
     window.addEventListener('pointerdown', () => this.sfx.unlock());
-    this.renderOverlay();
+    this.setup.render();
     this.renderStats();
-    void this.input.start().then(() => this.renderOverlay());
+    void this.input.start().then(() => this.setup.render());
     // 冒烟测试 / 调试用：?debug=1 时把实例挂到 window 上
     if (new URLSearchParams(location.search).has('debug')) {
       (window as unknown as { __practice: PracticeApp }).__practice = this;
@@ -223,16 +219,19 @@ export class PracticeApp {
     };
   }
 
-  private linkStatus = { text: '正在准备手机连接…', ok: false };
+  /** 连接、校准之后就是练习本身 */
+  private get step(): Step {
+    const s = this.setup.step;
+    return s === 'done' ? 'play' : s;
+  }
 
   /** 当前屏幕的画面延迟补偿（毫秒） */
   private get latencyMs(): number {
-    return this.settings.latencyByScreen[screenKey()] ?? tuning.timing.displayLatencyMs;
+    return latencyMs();
   }
 
   private setLatency(ms: number): void {
-    this.settings.latencyByScreen[screenKey()] = clamp(Math.round(ms), 0, 300);
-    saveSettings(this.settings);
+    setLatencyMs(ms);
   }
 
   private makeSim(): FeederSim {
@@ -278,10 +277,7 @@ export class PracticeApp {
     if (this.rec) this.recTick(now);
     this.draw();
     this.updateStatus(now);
-    if (this.step === 'connect' && this.input.streaming) this.renderOverlay();
-    if (this.step !== 'play' && this.step !== 'connect' && this.input.streaming)
-      this.renderOverlayLive();
-    if (this.step === 'still') this.updateStillStep();
+    this.setup.tick();
     requestAnimationFrame(() => this.loop());
   }
 
@@ -315,49 +311,21 @@ export class PracticeApp {
   }
 
   /** 玩家的球拍：已校准时朝向 1:1 跟随设备，位置在手上；挥拍时位置跟随挥拍动画 */
-  private nearPaddle(t: number, body: { x: number; y: number }): PaddlePose {
-    const p = this.sim.player;
-    const anim = cpuPaddle(body, p, p.swing, t);
-    const dev = this.input.active;
-    const q = dev?.paddle.paddleQuat();
-    if (!dev || !q || this.keyboard) return anim;
-    const n = normalize(rotate(q, vec3(0, 1, 0)));
-    const up = normalize(rotate(q, vec3(0, 0, 1)));
-    const swinging = p.swing && t >= p.swing.start && t <= p.swing.end + 0.25;
-    if (swinging) return { pos: anim.pos, normal: n, handle: vec3(-up.x, -up.y, -up.z) };
-    const fh = forehandSign(p);
-    const side = p.stance === 'fh' ? 0.24 : -0.12;
-    const hand = vec3(body.x + fh * side, body.y + 0.36, TABLE.height + 0.2);
-    return {
-      pos: vec3(hand.x + up.x * 0.13, hand.y + up.y * 0.13, hand.z + up.z * 0.13),
-      normal: n,
-      handle: vec3(-up.x, -up.y, -up.z),
-    };
+  private nearPaddle(t: number, body: { x: number; y: number }) {
+    const paddle = this.keyboard ? null : (this.input.active?.paddle ?? null);
+    return humanPaddle(paddle, this.sim.player, body, t);
   }
 
   // ---------------------------------------------------------------- 输入
 
-  private onDeviceSwing(e: {
-    device: InputDevice;
-    commit: import('@/input/paddle/SwingDetector').SwingCommit;
-    dir: 1 | -1 | 0;
-    features: import('@/sim/hit/HitResolver').SwingFeatures;
-  }): void {
+  private onDeviceSwing(e: SwingEventOut): void {
     const c = e.commit;
     this.showSwing(e.dir, c.wPeak, c.path);
     if (this.step !== 'play' || this.paused) return;
-    const sw: SwingInput = {
-      id: c.id,
-      motion: c.motion,
-      path: c.path,
-      tDetect: this.simAt(performance.now()),
-      tContact: this.simAt(c.tContact) - this.latencyMs / 1000,
-      dir: e.dir,
-      yawFrac: c.yawFrac,
-      wPeak: c.wPeak,
-      features: e.features,
-    };
-    this.applySwing(sw, c);
+    this.applySwing(
+      deviceSwingInput(e, (ms) => this.simAt(ms), this.latencyMs),
+      c
+    );
   }
 
   private applySwing(sw: SwingInput, commit: SwingCommit | null): void {
@@ -378,24 +346,16 @@ export class PracticeApp {
       // 键盘：F 正手、J 反手；按住 W 拉上旋、S 搓下旋；Shift 大力
       this.keyboard = true;
       const dir = k === 'f' ? 1 : -1;
-      const now = performance.now();
-      const brush = this.keysDown.has('w') ? 0.7 : this.keysDown.has('s') ? -0.7 : 0;
-      const w = e.shiftKey ? 22 : 15;
-      this.showSwing(dir, w, 'key');
-      this.applySwing(
-        {
-          id: this.keyId,
-          motion: this.keyId++,
-          path: 'key',
-          tDetect: this.simAt(now),
-          tContact: this.simAt(now) - this.latencyMs / 1000,
-          dir,
-          yawFrac: 1,
-          wPeak: w,
-          features: { ...NO_FEATURES, brush },
-        },
-        null
+      const sw = keySwingInput(
+        dir,
+        this.keysDown,
+        e.shiftKey,
+        this.keyId++,
+        (ms) => this.simAt(ms),
+        this.latencyMs
       );
+      this.showSwing(dir, sw.wPeak, 'key');
+      this.applySwing(sw, null);
     }
   }
 
@@ -413,27 +373,17 @@ export class PracticeApp {
       if (this.step === 'play') this.togglePause();
       return;
     }
-    const face = this.input.active?.kind === 'phone' ? '屏幕' : '按键面';
-    if (this.step === 'ready' && (b === 'confirm' || b === 'recenter')) {
-      if (this.input.recenter()) {
-        this.sfx.beep(1040, 0.1);
-        this.startPlay('校准完成');
-      } else {
-        this.hud.flash(`${face}别朝上或朝下`, `摆正手准备姿势，${face}朝向电视`, 1.6, 'bad');
-      }
-      return;
-    }
+    if (this.setup.onButton(b)) return;
     if (this.step === 'play' && b === 'recenter') {
+      const head = deviceWords(this.input).head;
       if (this.input.recenter()) this.hud.flash('已回中', '', 0.8);
-      else this.hud.flash('没能回中', `摆正手准备姿势、${face}朝向电视再按`, 1.4, 'bad');
+      else this.hud.flash('没能回中', `把${head}像遥控器一样指向电视再按`, 1.4, 'bad');
     }
   }
 
   // ---------------------------------------------------------------- 流程
 
   private startPlay(msg: string): void {
-    this.step = 'play';
-    this.overlay.hidden = true;
     this.paused = false;
     this.sim.pause(false);
     this.hud.flash(msg, '发球机开始送球', 1.4, 'good');
@@ -482,10 +432,8 @@ export class PracticeApp {
 
   private startRecording(): void {
     this.rec = new PracticeRecorder(this.keyboard ? null : this.input.active, this.settingsLog());
-    this.lastClockLog = 0;
-    this.lastPoseLog = 0;
+    this.recTicker = new RecordTicker();
     this.lastPlan = null;
-    this.lastBiasLog = NaN;
     this.logCalib();
     this.rec.push({ k: 'pause', rt: performance.now(), paused: this.paused });
   }
@@ -503,48 +451,21 @@ export class PracticeApp {
   }
 
   private logCalib(): void {
-    const rec = this.rec;
-    const d = rec?.device;
-    if (!rec || !d) return;
-    rec.push({
-      k: 'calib',
-      rt: performance.now(),
-      hasHeading: d.paddle.hasHeading,
-      yaw: d.paddle.yaw,
-      grip: q4(d.paddle.grip),
-      handed: d.paddle.handed,
-    });
+    const d = this.rec?.device;
+    if (d) this.rec!.push(calibLog(d, performance.now()));
   }
 
   private logSwing(input: SwingInput, outcome: SwingOutcome, commit: SwingCommit | null): void {
-    const rec = this.rec;
-    if (!rec) return;
-    const p = this.sim.player;
-    const paddle = this.input.active?.paddle;
-    const face = this.keyboard ? null : (paddle?.faceNormal() ?? null);
-    const blade = this.keyboard ? null : (paddle?.bladeUp() ?? null);
-    rec.push({
-      k: 'swing',
-      rt: performance.now(),
-      st: this.sim.t,
-      commit: commit ? commitLog(commit) : null,
-      input,
-      outcome,
-      stance: p.stance,
-      stanceHint: this.keyboard ? null : (this.input.active?.paddle.stanceHint() ?? null),
-      body: [p.mover.x, p.mover.y],
-      face: face ? v3(face) : null,
-      blade: blade ? v3(blade) : null,
-    });
+    const paddle = this.keyboard ? null : (this.input.active?.paddle ?? null);
+    this.rec?.push(
+      swingLog(performance.now(), this.sim.t, input, outcome, commit, this.sim.player, paddle)
+    );
   }
 
   /** 每帧：时钟对应、理想击球点变化、姿态采样（约 10 次/秒），到量自动停止 */
   private recTick(now: number): void {
     const rec = this.rec!;
-    if (now - this.lastClockLog >= 1000) {
-      this.lastClockLog = now;
-      rec.push({ k: 'clock', rt: this.clockReal, st: this.clockSim });
-    }
+    this.recTicker.tick(rec, now, this.clockReal, this.clockSim);
     const plan = this.sim.plan;
     if (plan && plan !== this.lastPlan) {
       this.lastPlan = plan;
@@ -560,31 +481,6 @@ export class PracticeApp {
       });
     }
     const d = rec.device;
-    if (d && d.motion.biasLearnedAt !== this.lastBiasLog) {
-      this.lastBiasLog = d.motion.biasLearnedAt;
-      const at = d.motion.biasLearnedAt;
-      rec.push({
-        k: 'gyroBias',
-        rt: now,
-        bias: v3(d.motion.gyroBias),
-        mode: d.motion.biasMode,
-        learnedAt: Number.isFinite(at) ? at : null,
-      });
-    }
-    if (d && now - this.lastPoseLog >= 100) {
-      this.lastPoseLog = now;
-      const f = d.paddle.faceNormal();
-      const b = d.paddle.bladeUp();
-      rec.push({
-        k: 'pose',
-        rt: now,
-        q: q4(d.paddle.q),
-        face: f ? v3(f) : null,
-        blade: b ? v3(b) : null,
-        yaw: d.paddle.yaw,
-        drift: d.paddle.drift,
-      });
-    }
     const gone = d !== null && !this.input.devices.has(d.key);
     if (gone || rec.results >= RECORD_MAX_BALLS || rec.elapsedMs >= RECORD_MAX_MS) {
       this.stopRecording(true);
@@ -693,122 +589,20 @@ export class PracticeApp {
   private updateStatus(now: number): void {
     if (now - this.lastStatus < 300) return;
     this.lastStatus = now;
-    const d = this.input.active;
-    const dev = this.keyboard
-      ? '键盘（F 正手 · J 反手 · 按住 W 上旋 / S 下旋 · Shift 大力）'
-      : d
-        ? `${d.name}${this.input.streaming ? '' : '（没有数据）'}${d.paddle.calibrated ? '' : ' · 还没定电视方向（摆准备姿势按回中）'}`
-        : '没有连接体感设备';
+    const dev = deviceLine(
+      this.input,
+      this.keyboard,
+      '键盘（F 正手 · J 反手 · 按住 W 上旋 / S 下旋 · Shift 大力）',
+      now
+    );
     const rec = this.rec;
     const recText = rec
       ? `<br/><span class="pr-rec">● 录制中 · 已录 ${rec.results} / ${RECORD_MAX_BALLS} 球 · ${Math.floor(rec.elapsedMs / 60000)}:${String(Math.floor(rec.elapsedMs / 1000) % 60).padStart(2, '0')}</span>`
       : '';
-    let bias = '';
-    if (!this.keyboard && d?.kind === 'joycon') {
-      const at = d.motion.biasLearnedAt;
-      const min = Math.floor((now - at) / 60000);
-      bias = Number.isFinite(at)
-        ? ` · 陀螺仪零点 ${min < 1 ? '刚测过' : `${min} 分钟前测过`}`
-        : ' · 陀螺仪零点未测（平放 2 秒会自动测）';
-    }
-    this.statusEl.innerHTML = `${dev}${bias}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中（摆准备姿势按）：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.latencyMs}ms</span>${recText}`;
+    this.statusEl.innerHTML = `${dev}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中（拍头指向电视按）：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${this.latencyMs}ms</span>${recText}`;
   }
 
   private lastStatus = 0;
-
-  // ---------------------------------------------------------------- 连接与校准界面
-
-  private renderOverlay(): void {
-    if (this.step === 'play') return;
-    const o = this.overlay;
-    o.hidden = false;
-    const dev = this.input.active;
-    if (this.step === 'connect' && dev && this.input.streaming) this.enterCalibration();
-    if (this.step === 'connect') {
-      o.innerHTML = `
-        <div class="pr-panel">
-          <h2>发球机练习 · 连接体感设备</h2>
-          <div class="pr-connect">
-            <div class="pr-box">
-              <h3>用手机</h3>
-              <canvas class="pr-qr" width="180" height="180"></canvas>
-              <ol class="pr-steps">
-                <li>手机和这台电脑连同一个 Wi-Fi，用相机（iPhone）或 Chrome（安卓）扫码，不要用微信扫。</li>
-                <li>在手机上点「开始」，iPhone 选「允许」动作与方向。</li>
-              </ol>
-              <div class="pr-link ${this.linkStatus.ok ? 'ok' : 'warn'}">● ${this.linkStatus.text}</div>
-              ${this.input.room ? `<div class="pr-room">房间号 ${this.input.room}</div>` : ''}
-            </div>
-            <div class="pr-box">
-              <h3>用 Joy-Con</h3>
-              <p class="dim">先在系统蓝牙里配对，再点下面的按钮选择手柄。</p>
-              <button class="primary" data-act="joycon" ${this.input.webHidSupported ? '' : 'disabled'}>连接 Joy-Con</button>
-              <h3 class="pr-gap">没有设备？</h3>
-              <button data-act="keyboard">用键盘试一试</button>
-              <p class="dim small">F 正手、J 反手，按键时机 = 击球时机。</p>
-            </div>
-          </div>
-          <p class="dim small">⚠️ 握紧设备、最好挂上腕带 / 手机绳，注意周围的人和物品。</p>
-          <p><a href="./">返回首页</a></p>
-        </div>`;
-      const qr = o.querySelector<HTMLCanvasElement>('.pr-qr');
-      if (qr && this.input.phoneUrl) {
-        void QRCode.toCanvas(qr, this.input.phoneUrl, { width: 180, margin: 1 });
-      }
-      o.querySelector('[data-act="joycon"]')?.addEventListener('click', () => {
-        void this.input.requestJoyCon().catch(() => {});
-      });
-      o.querySelector('[data-act="keyboard"]')?.addEventListener('click', () =>
-        this.startKeyboard()
-      );
-      return;
-    }
-    this.renderOverlayLive(true);
-  }
-
-  private overlayStep: Step | null = null;
-
-  /** 平放 / 准备姿势两步：内容按设备类型给出按键提示 */
-  private renderOverlayLive(force = false): void {
-    if (!force && this.overlayStep === this.step) return;
-    this.overlayStep = this.step;
-    const o = this.overlay;
-    const dev = this.input.active;
-    const phone = dev?.kind === 'phone';
-    const btnRecenter = phone ? '手机上的「回中」' : 'Joy-Con 的 Y 键';
-    const btnConfirm = phone ? '手机上的「确认」' : 'Joy-Con 的 A 键';
-    const top = phone ? '手机顶端' : '肩键（R / ZR）那一端';
-    const face = phone ? '屏幕' : '按键面';
-    // Joy-Con 多一步「平放」
-    const n0 = dev?.kind === 'joycon' ? 1 : 0;
-    const body =
-      this.step === 'still'
-        ? `<h2>第 1 步：平放</h2>
-           <p class="pr-big">把 Joy-Con <b>按键面朝上平放在桌上</b>，别碰它，2 秒就好。</p>
-           <p class="dim">这一步重新测陀螺仪零点，打球时画面里的拍子就不会慢慢转偏。之后打球中途把 Joy-Con 平放在桌上，也会自动重新测。</p>
-           <div class="pr-progress"><i></i></div>
-           <p class="pr-still-state dim">等你放好：按键面朝上平放，别碰它</p>`
-        : `<h2>第 ${1 + n0} 步：准备姿势</h2>
-           <p class="pr-big">把${phone ? '手机' : ' Joy-Con '}当成球拍：${top}是拍头，${face}是正手面（红面）。摆正手准备姿势，<b>${face}朝向电视</b>，按${btnConfirm}。</p>
-           <p class="dim">这一步定下电视的方向。打球中觉得拍子方向偏了，摆这个姿势按${btnRecenter}就能回中；等球时拿稳不动，游戏也会自动慢慢校正。</p>`;
-    o.innerHTML = `
-      <div class="pr-panel">
-        ${body}
-        <p class="dim">当前设备：${dev ? dev.name : '—'}</p>
-        <div class="pr-actions">
-          ${this.step === 'still' ? '<button data-act="skip-still">跳过这一步</button>' : ''}
-          <button data-act="skip">跳过校准，直接开始（只判断时机和力度）</button>
-        </div>
-      </div>`;
-    o.querySelector('[data-act="skip-still"]')?.addEventListener('click', () => {
-      this.step = 'ready';
-      this.renderOverlay();
-    });
-    o.querySelector('[data-act="skip"]')?.addEventListener('click', () => {
-      this.input.recenter();
-      this.startPlay('已跳过拍面校准');
-    });
-  }
 
   private renderPause(): void {
     const p = this.pauseEl;
@@ -884,53 +678,7 @@ export class PracticeApp {
       this.paused = false;
       this.pauseEl.hidden = true;
       this.sim.pause(true);
-      this.enterCalibration();
-      this.overlayStep = null;
-      this.renderOverlay();
+      this.setup.restart();
     });
-  }
-
-  // ---------------------------------------------------------------- 平放（重新测陀螺仪零点）
-
-  /** 校准从哪一步开始：Joy-Con 先平放测零点，手机直接摆准备姿势 */
-  private enterCalibration(): void {
-    if (this.input.active?.kind === 'joycon') {
-      this.step = 'still';
-      this.stillSince = performance.now();
-    } else {
-      this.step = 'ready';
-    }
-  }
-
-  private stillSince = 0;
-
-  /** 每帧：平放这一步的进度；测到新的零点就进入准备姿势 */
-  private updateStillStep(): void {
-    const dev = this.input.active;
-    if (!dev || dev.kind !== 'joycon') {
-      this.step = 'ready';
-      this.renderOverlay();
-      return;
-    }
-    if (dev.motion.biasLearnedAt > this.stillSince) {
-      this.sfx.beep(880, 0.08);
-      this.hud.flash('陀螺仪零点测好了', '', 1.0, 'good');
-      this.step = 'ready';
-      this.renderOverlay();
-      return;
-    }
-    const st = dev.motion.flatStatus;
-    const bar = this.overlay.querySelector<HTMLElement>('.pr-progress i');
-    const txt = this.overlay.querySelector<HTMLElement>('.pr-still-state');
-    const p = st.phase === 'collecting' ? st.progress : 0;
-    if (bar) bar.style.width = `${Math.round(p * 100)}%`;
-    if (txt) {
-      txt.textContent =
-        st.phase === 'collecting'
-          ? `测量中… ${Math.round(p * 100)}%`
-          : st.phase === 'settling'
-            ? '放稳了，马上开始测量…'
-            : '等你放好：按键面朝上平放，别碰它';
-    }
   }
 }

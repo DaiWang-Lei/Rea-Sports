@@ -1,6 +1,7 @@
 /**
  * 一局比赛的完整仿真（纯逻辑，固定 240Hz 步长，可无界面运行）：
  * 发球流程、球的物理、裁判、记分、电脑 AI、走位，以及给渲染/音效/震动用的事件队列。
+ * 没有电脑的一方由人操作（HumanPlayer）：抛球、挥拍从外面送进来（humanToss / humanSwing）。
  */
 import { cpuLevel } from '@/config/difficulty';
 import { createTuning, type Tuning } from '@/config/tuning';
@@ -8,13 +9,17 @@ import { Rng } from '@/core/rng';
 import { isFiniteVec, type Vec3, vec3 } from '@/core/vec3';
 import { CpuBrain, type BrainHost } from './ai/CpuBrain';
 import type { HitDecision, WhiffReason } from './ai/ShotPlanner';
+import type { SwingFeatures, SwingInput, SwingOutcome } from './hit/HitResolver';
 import { ballState, type BallEvent, type BallState, stepBall } from './ball/physics';
 import { GRAVITY, otherSide, type Side, SIM_DT } from './constants';
+import { HumanPlayer, type HumanMissReason, type HumanShot } from './players/HumanPlayer';
 import {
   createPlayer,
+  forehandSign,
   type PlayerSim,
   readyPosition,
   serveHandPosition,
+  type Stroke,
 } from './players/PlayerSim';
 import type { MoverLimits } from './players/Mover';
 import { type PointReason, Referee, type RefereeInput, type RefereeOutput } from './rally/Referee';
@@ -38,6 +43,8 @@ export interface MatchOptions {
   tune?: Tuning;
   /** 人类玩家的走位参数 */
   humanLimits?: MoverLimits;
+  /** 人类玩家的宽容度 0..1 */
+  leniency?: number;
 }
 
 export type MatchEvent =
@@ -51,8 +58,19 @@ export type MatchEvent =
       smash: boolean;
       serve: boolean;
       rallyHits: number;
+      /** 人这一拍的时机、力度、旋转（电脑击球没有） */
+      human?: HumanShot;
     }
-  | { type: 'whiff'; t: number; side: Side }
+  | {
+      type: 'whiff';
+      t: number;
+      side: Side;
+      /** 人挥空的原因（未落台击球也会先给一个 whiff 事件，紧接着是失分），以及时机偏差（毫秒） */
+      reason?: HumanMissReason | 'volley';
+      timingMs?: number;
+      stroke?: Stroke;
+      serve?: boolean;
+    }
   | { type: 'bounce'; t: number; side: Side; edge: boolean; impact: number; p: Vec3 }
   | { type: 'net'; t: number; part: 'cord' | 'body'; impact: number; p: Vec3 }
   | { type: 'floor'; t: number; impact: number; p: Vec3 }
@@ -67,6 +85,8 @@ export type MatchEvent =
       rallyHits: number;
     }
   | { type: 'let'; t: number }
+  /** 这一分被中断（暂停、手柄断开），不记分，重新发球 */
+  | { type: 'replay'; t: number }
   | { type: 'gameOver'; t: number; result: Exclude<GameResult, null>; score: Record<Side, number> };
 
 export type MatchPhase =
@@ -102,6 +122,11 @@ export interface MatchStats {
 
 const DEFAULT_HUMAN_LIMITS: MoverLimits = { vMax: 3.4, aMax: 16, gain: 6, yFactor: 0.6 };
 const LET_PAUSE = 1.2;
+/** 轮到人发球后，多久可以抛球（秒）；抛球没打到、球落下后再等这么久 */
+const HUMAN_TOSS_DELAY = 0.5;
+const HUMAN_RETOSS_DELAY = 0.3;
+const SIDES = ['near', 'far'] as const;
+const IGNORE: SwingOutcome = { type: 'ignore' };
 
 export class MatchSim implements BrainHost {
   readonly tune: Tuning;
@@ -110,6 +135,7 @@ export class MatchSim implements BrainHost {
   readonly referee = new Referee();
   readonly players: Record<Side, PlayerSim>;
   readonly brains: Partial<Record<Side, CpuBrain>> = {};
+  readonly humans: Partial<Record<Side, HumanPlayer>> = {};
   readonly pace: number;
   readonly windowMs: number;
   readonly points: 6 | 11;
@@ -162,6 +188,11 @@ export class MatchSim implements BrainHost {
           }
         : (opts.humanLimits ?? DEFAULT_HUMAN_LIMITS);
       if (isCpu) this.brains[side] = new CpuBrain(side, level, this.rng);
+      else {
+        this.humans[side] = new HumanPlayer(side, this.rng, this.tune, this.windowMs, {
+          leniency: opts.leniency,
+        });
+      }
       return createPlayer(side, opts.handed?.[side] ?? 1, isCpu, limits, this.tune);
     };
     this.players = { near: mk('near'), far: mk('far') };
@@ -186,8 +217,9 @@ export class MatchSim implements BrainHost {
     const dt = SIM_DT;
     this.updatePhase();
 
-    for (const side of ['near', 'far'] as const) this.brains[side]?.tick(this);
-    for (const side of ['near', 'far'] as const) {
+    for (const side of SIDES) this.brains[side]?.tick(this);
+    for (const side of SIDES) this.humans[side]?.tick(this);
+    for (const side of SIDES) {
       const p = this.players[side];
       p.mover.update(dt, p.limits);
     }
@@ -223,17 +255,28 @@ export class MatchSim implements BrainHost {
     this.rallyHits = 0;
     this.pointStartT = this.t;
     this.lastHitT = NaN;
-    for (const side of ['near', 'far'] as const) {
+    for (const side of SIDES) {
       const p = this.players[side];
       p.swing = null;
       const r = readyPosition(side, 0, this.tune);
-      // 发球方站在偏正手位一点
-      const x = side === server ? this.rng.uniform(-0.35, 0.35) : r.x;
+      // 发球方：电脑随机站位，人站在中间偏正手一点
+      let x = r.x;
+      if (side === server) {
+        x = this.humans[side] ? 0.15 * forehandSign(p) : this.rng.uniform(-0.35, 0.35);
+      }
       p.mover.setTarget(x, r.y);
-      this.brains[side]?.cancel();
+      this.controller(side)?.cancel();
     }
     this.holdBall(server);
-    this.brains[server]?.prepareServe(this.t + this.tune.rules.serveDelay);
+    this.prepareServe(server, this.humans[server] ? HUMAN_TOSS_DELAY : this.tune.rules.serveDelay);
+  }
+
+  private controller(side: Side): CpuBrain | HumanPlayer | undefined {
+    return this.brains[side] ?? this.humans[side];
+  }
+
+  private prepareServe(server: Side, delay: number): void {
+    this.controller(server)?.prepareServe(this.t + delay);
   }
 
   private updatePhase(): void {
@@ -247,7 +290,10 @@ export class MatchSim implements BrainHost {
           this.ballFree = false;
           this.phase = { kind: 'preServe', server: ph.server, since: this.t };
           this.holdBall(ph.server);
-          this.brains[ph.server]?.prepareServe(this.t + rules.serveDelay * 0.6);
+          this.prepareServe(
+            ph.server,
+            this.humans[ph.server] ? HUMAN_RETOSS_DELAY : rules.serveDelay * 0.6
+          );
         }
         break;
       }
@@ -324,8 +370,8 @@ export class MatchSim implements BrainHost {
     return this.toss(side, height);
   }
 
-  /** 发球击球（电脑或玩家） */
-  serve(side: Side, spec: ServeSpec): void {
+  /** 发球击球（电脑或玩家）；shot = 人这一拍的情况 */
+  serve(side: Side, spec: ServeSpec, shot?: HumanShot): void {
     if (this.phase.kind !== 'toss' || this.phase.server !== side) return;
     const built = buildServe({ ...this.ball.p }, spec, this.tune);
     if (!built.ok) this.stats.solverFailures++;
@@ -353,6 +399,7 @@ export class MatchSim implements BrainHost {
       smash: false,
       serve: true,
       rallyHits: this.rallyHits,
+      ...(shot ? { human: shot } : {}),
     });
     this.handleReferee(this.referee.feed({ type: 'serveHit', side }));
   }
@@ -381,10 +428,10 @@ export class MatchSim implements BrainHost {
   }
 
   /**
-   * 击球：按 ShotSpec 解出手速度，交给裁判。玩家的击球也走这里。
+   * 击球：按 ShotSpec 解出手速度，交给裁判。玩家的击球也走这里（shot = 人这一拍的情况）。
    * 不在可击球状态（例如这一分已经结束）时忽略。
    */
-  hit(side: Side, spec: ShotSpec): void {
+  hit(side: Side, spec: ShotSpec, shot?: HumanShot): void {
     if (this.phase.kind !== 'play' || !this.ballFree) return;
     const built = buildShot({ ...this.ball.p }, spec, this.tune);
     if (!built.ok) this.stats.solverFailures++;
@@ -411,11 +458,59 @@ export class MatchSim implements BrainHost {
       smash: !!spec.smash,
       serve: false,
       rallyHits: this.rallyHits,
+      ...(shot ? { human: shot } : {}),
     });
     const out = this.handleReferee(this.referee.feed({ type: 'hit', side }));
     if (out.type === 'continue') {
-      this.brains[otherSide(side)]?.onIncoming(this, !!spec.oops, !!spec.smash);
+      this.controller(otherSide(side))?.onIncoming(this, !!spec.oops, !!spec.smash);
     }
+  }
+
+  // ---------------------------------------------------------------- 人的输入
+
+  human(side: Side): HumanPlayer | null {
+    return this.humans[side] ?? null;
+  }
+
+  /** 人抛球（按键或向上抖手柄），height = 手以上的高度（米）。返回是否抛出去了 */
+  humanToss(side: Side, height: number): boolean {
+    return this.humans[side]?.toss(this, height) ?? false;
+  }
+
+  /** 人挥拍（时间已换算成仿真时间） */
+  humanSwing(side: Side, sw: SwingInput): SwingOutcome {
+    return this.humans[side]?.swing(this, sw) ?? IGNORE;
+  }
+
+  /** 挥拍峰值：更新还没执行的击球的峰值与拍面特征 */
+  humanRefine(side: Side, id: number, wPeak: number, features: SwingFeatures | null): void {
+    this.humans[side]?.refine(id, wPeak, features);
+  }
+
+  humanWhiff(
+    side: Side,
+    reason: HumanMissReason,
+    timingMs: number,
+    stroke: Stroke,
+    serve: boolean
+  ): void {
+    this.stats.whiffs++;
+    this.events.push({ type: 'whiff', t: this.t, side, reason, timingMs, stroke, serve });
+  }
+
+  /** 人犯规（未落台击球）：回合还在进行就把这一分判给对方 */
+  foul(side: Side, reason: 'volley', timingMs: number, stroke: Stroke): void {
+    if (this.phase.kind !== 'play') return;
+    this.events.push({ type: 'whiff', t: this.t, side, reason, timingMs, stroke, serve: false });
+    this.handleReferee(this.referee.foul(side, reason));
+  }
+
+  /** 中断这一分（暂停、手柄断开）：正在发球或对打时不记分，重新发球 */
+  interruptPoint(): void {
+    const k = this.phase.kind;
+    if (k !== 'toss' && k !== 'play') return;
+    this.events.push({ type: 'replay', t: this.t });
+    this.startPoint();
   }
 
   private recordHit(): void {
@@ -461,7 +556,7 @@ export class MatchSim implements BrainHost {
     const receiver = otherSide(this.inFlight.hitter);
     // 发球已落在发球方半台：接发球方开始规划
     if (before === 'serve1' && this.referee.state === 'serve2') {
-      this.brains[receiver]?.onIncoming(this, false, false);
+      this.controller(receiver)?.onIncoming(this, false, false);
     } else if (e.type === 'net' || (e.type === 'table' && e.edge)) {
       // 擦网、擦边会改变轨迹：重新规划
       if (
@@ -469,31 +564,48 @@ export class MatchSim implements BrainHost {
         this.referee.state === 'serve2' ||
         this.referee.state === 'rallyBounced'
       ) {
-        this.brains[receiver]?.onIncoming(this, this.inFlight.popup, this.inFlight.smash);
+        this.controller(receiver)?.onIncoming(this, this.inFlight.popup, this.inFlight.smash);
       }
     }
   }
 
   private handleReferee(out: RefereeOutput): RefereeOutput {
     if (out.type === 'point') {
+      // 人还挂着的挥早 / 未落台（判定比挥拍晚一点）：这一分结束前算数；未落台击球就是这一分的失分原因
+      let reason = out.reason;
+      for (const side of SIDES) {
+        const miss = this.humans[side]?.flushHeld(this);
+        if (miss?.type !== 'volley' || out.winner === side) continue;
+        reason = 'volley';
+        this.events.push({
+          type: 'whiff',
+          t: this.t,
+          side,
+          reason,
+          timingMs: Math.round(miss.tau * this.windowMs),
+          stroke: miss.stroke,
+          serve: false,
+        });
+      }
       this.scoring.addPoint(out.winner);
-      this.phase = { kind: 'pointOver', winner: out.winner, reason: out.reason, since: this.t };
-      this.stats.reasons[out.reason] = (this.stats.reasons[out.reason] ?? 0) + 1;
+      this.phase = { kind: 'pointOver', winner: out.winner, reason, since: this.t };
+      this.stats.reasons[reason] = (this.stats.reasons[reason] ?? 0) + 1;
       this.stats.pointDurations.push(this.t - this.pointStartT);
       this.stats.rallyLengths.push(this.rallyHits);
-      for (const side of ['near', 'far'] as const) this.brains[side]?.cancel();
+      for (const side of SIDES) this.controller(side)?.cancel();
       this.events.push({
         type: 'point',
         t: this.t,
         winner: out.winner,
-        reason: out.reason,
+        reason,
         score: { ...this.scoring.score },
         rallyHits: this.rallyHits,
       });
       this.inFlight = null;
+      return reason === out.reason ? out : { ...out, reason };
     } else if (out.type === 'let') {
       this.phase = { kind: 'let', since: this.t };
-      for (const side of ['near', 'far'] as const) this.brains[side]?.cancel();
+      for (const side of SIDES) this.controller(side)?.cancel();
       this.events.push({ type: 'let', t: this.t });
       this.inFlight = null;
     }

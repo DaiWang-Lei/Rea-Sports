@@ -1,18 +1,32 @@
 /**
- * 简化的人物：胶囊身体 + 球形头 + 两条腿 + 持拍手臂 + 双色球拍（红 = 正手面，黑 = 反手面）。
+ * 简化的人物：胶囊身体 + 球形头 + 两条腿 + 持拍手臂（上臂、前臂两段，肘按反向运动学弯曲）
+ * + 双色球拍（红 = 正手面，黑 = 反手面）。
  * 近端的自己画成半透明（WSR 的做法），保证随时看得到球；球拍始终不透明。
  */
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
-import type { PaddlePose } from './paddlePose';
+import { elbowOf, GRIP_TO_CENTER, type PaddlePose, shoulderOf } from './paddlePose';
 
 const BLADE_R = 0.078;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const tmp = new THREE.Vector3();
+
+/** 把沿 Y 轴、长 1 的圆柱摆到 a → b */
+function segment(m: THREE.Mesh, a: Vec3, b: Vec3): void {
+  tmp.set(b.x - a.x, b.y - a.y, b.z - a.z);
+  const len = Math.max(0.02, tmp.length());
+  m.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+  m.scale.set(1, len, 1);
+  m.quaternion.setFromUnitVectors(Y_AXIS, tmp.normalize());
+}
 
 export class AvatarView {
   readonly group = new THREE.Group();
   private readonly bodyGroup = new THREE.Group();
-  private readonly arm: THREE.Mesh;
+  private readonly upperArm: THREE.Mesh;
+  private readonly forearm: THREE.Mesh;
+  private readonly elbow: THREE.Mesh;
+  private readonly hand: THREE.Mesh;
   private readonly paddle = new THREE.Group();
   private readonly bodyMaterials: THREE.MeshStandardMaterial[] = [];
   private readonly baseOpacity: number;
@@ -45,8 +59,12 @@ export class AvatarView {
     }
     this.group.add(this.bodyGroup);
 
-    this.arm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.03, 1, 10), mat(0xf1c9a5));
-    this.group.add(this.arm);
+    const skin = mat(0xf1c9a5);
+    this.upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.035, 1, 10), skin);
+    this.forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.028, 1, 10), skin);
+    this.elbow = new THREE.Mesh(new THREE.SphereGeometry(0.037, 12, 10), skin);
+    this.hand = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 10), skin);
+    this.group.add(this.upperArm, this.forearm, this.elbow, this.hand);
 
     // 球拍：局部 Y = 红面法向，局部 −Z = 拍柄方向
     const red = new THREE.Mesh(
@@ -101,16 +119,18 @@ export class AvatarView {
     this.paddle.quaternion.setFromRotationMatrix(m);
     this.paddle.position.set(paddle.pos.x, paddle.pos.y, paddle.pos.z);
 
-    // 手臂：肩 → 握拍处
-    const shoulder = new THREE.Vector3(body.x + shoulderSide * 0.19, body.y + facing * 0.04, 1.2);
-    const grip = new THREE.Vector3(paddle.pos.x, paddle.pos.y, paddle.pos.z).add(
-      h.multiplyScalar(BLADE_R + 0.06)
-    );
-    const dir = new THREE.Vector3().subVectors(grip, shoulder);
-    const len = Math.max(0.05, dir.length());
-    this.arm.position.copy(shoulder).add(dir.clone().multiplyScalar(0.5));
-    this.arm.scale.set(1, len, 1);
-    this.arm.quaternion.setFromUnitVectors(Y_AXIS, dir.normalize());
+    // 手臂：肩 → 肘 → 握拍处（拍柄末端往拍面方向一点）
+    const s = shoulderOf(body, facing, shoulderSide);
+    const g = {
+      x: paddle.pos.x + h.x * GRIP_TO_CENTER,
+      y: paddle.pos.y + h.y * GRIP_TO_CENTER,
+      z: paddle.pos.z + h.z * GRIP_TO_CENTER,
+    };
+    const e = elbowOf(s, g, facing, shoulderSide);
+    segment(this.upperArm, s, e);
+    segment(this.forearm, e, g);
+    this.elbow.position.set(e.x, e.y, e.z);
+    this.hand.position.set(g.x, g.y, g.z);
   }
 
   get paddlePosition(): Vec3 {
