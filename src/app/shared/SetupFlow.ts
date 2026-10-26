@@ -1,10 +1,10 @@
 /**
- * 连接与校准（练习、比赛共用）：连接设备 → 拍头指向电视校准（像 Switch 那样）。
- *  - Joy-Con：按键面朝上平放在桌上、肩键一端指向电视，按住 X + R（Joy-Con L：↑ + L）。
- *    放稳约 2 秒测陀螺仪零点，同时定下电视方向；
- *  - 手机：屏幕朝上放平、顶端指向电视，按「确认」。
+ * 连接与校准（练习、比赛共用）：连接设备 → 拍头像遥控器一样指向电视、按键（像 Nintendo Switch Sports）。
+ *  - Joy-Con：肩键一端指向电视，按住 X + R（Joy-Con L：↑ + L）；按 Y / A 也行；
+ *  - 手机：顶端指向电视，按「确认」。
+ * 和打球中的回中是同一个动作，立即完成。陀螺仪零点不用专门测：Joy-Con 放在桌上不动 2 秒会在后台自动重测。
  * 画在给定的遮罩层里；校准完成（或跳过）后调 onDone，选了键盘调 onKeyboard。
- * 打球中的校准结果（任何时候平放按住 X + R 都能重新校准）也由这里给出提示（onCalibrate）。
+ * 打球中按住 X + R 回中的结果也由这里给出提示（onCalibrate）。
  */
 import QRCode from 'qrcode';
 import type { Sfx } from '@/audio/Sfx';
@@ -73,59 +73,32 @@ export class SetupFlow {
     this.render();
   }
 
-  /** 每帧调用：连上设备后进入校准；Joy-Con 平放测零点的进度 */
+  /** 每帧调用：连上设备后进入校准 */
   tick(): void {
     if (this.step === 'done') return;
     if (this.step === 'connect' && this.input.streaming) this.render();
-    if (this.step === 'point') {
-      if (this.input.streaming) this.renderLive();
-      this.updatePoint();
-    }
+    if (this.step === 'point' && this.input.streaming) this.renderLive();
   }
 
   /**
-   * 校准这一步的按键。手机按「确认」（或「回中」）就校准；Joy-Con 要按住 X + R（组合键由 MotionInput 识别），
-   * 单按 A / Y 只提示一下。返回 true = 已处理
+   * 校准这一步的按键：「确认」「回中」（Joy-Con 的 A / Y、手机的按钮）都按指向电视校准；
+   * Joy-Con 的 X + R 组合键由 MotionInput 识别，结果走 onCalibrate。返回 true = 已处理
    */
   onButton(b: string): boolean {
     if (this.step !== 'point' || (b !== 'confirm' && b !== 'recenter')) return false;
-    const w = deviceWords(this.input);
-    if (w.phone) this.input.requestCalibration();
-    else this.hud.flash(`按住 ${w.combo}`, `平放在桌上、${w.head}指向电视`, 1.4);
+    this.input.requestCalibration();
     return true;
   }
 
-  /** 校准结果：校准这一步里完成流程；打球中（任何时候平放按住组合键）给出提示 */
+  /** 校准 / 回中的结果：校准这一步里完成流程；打球中给出提示 */
   onCalibrate(result: CalibrateResult): void {
     const w = deviceWords(this.input);
-    switch (result) {
-      case 'done':
-        this.sfx.beep(1040, 0.1);
-        if (this.step === 'point') this.finish('校准完成');
-        else if (this.step === 'done') this.hud.flash('已重新校准', '', 1.0, 'good');
-        break;
-      case 'waiting':
-        if (this.step !== 'point') this.hud.flash('拿稳别动', '正在测陀螺仪零点（约 2 秒）', 2.2);
-        break;
-      case 'notFlat':
-        this.hud.flash(
-          '先平放在桌上',
-          `按键面朝上、${w.head}指向电视，再按住 ${w.combo}`,
-          1.8,
-          'bad'
-        );
-        break;
-      case 'moved':
-        this.hud.flash(
-          '还没测完就拿起来了',
-          `放回桌上、${w.head}指向电视，再按住 ${w.combo}`,
-          1.8,
-          'bad'
-        );
-        break;
-      case 'notPointing':
-        this.hud.flash(`${w.head}别朝上或朝下`, `${w.head}指向电视再按`, 1.6, 'bad');
-        break;
+    if (result === 'done') {
+      this.sfx.beep(1040, 0.1);
+      if (this.step === 'point') this.finish('校准完成');
+      else if (this.step === 'done') this.hud.flash('已回中', '', 0.8);
+    } else {
+      this.hud.flash(`${w.head}别朝上或朝下`, `像遥控器一样指向电视再按`, 1.6, 'bad');
     }
   }
 
@@ -196,15 +169,14 @@ export class SetupFlow {
     const w = deviceWords(this.input);
     const body = w.phone
       ? `<h2>校准：指向电视</h2>
-         <p class="pr-big">把手机<b>屏幕朝上放平、顶端指向电视</b>，按手机上的「确认」。</p>
+         <p class="pr-big">把手机<b>顶端像遥控器一样指向电视</b>，按手机上的「确认」。</p>
          <p class="dim">这一步定下电视的方向。之后手机就是球拍：顶端是拍头，屏幕是正手面（红面）。
-         打球中觉得拍子方向偏了，把手机顶端像遥控器一样指向电视，按手机上的${w.recenterKey}就能回中；等球时拿稳不动，游戏也会自动去掉漂移。</p>`
-      : `<h2>校准：平放指向电视</h2>
-         <p class="pr-big">把 Joy-Con <b>按键面朝上平放在桌上、肩键一端指向电视</b>，然后<b>按住 ${w.combo}</b>。</p>
-         <p class="dim">放稳别动约 2 秒：同时测陀螺仪零点、定下电视的方向。之后 Joy-Con 就是球拍：肩键一端是拍头，按键面是正手面（红面）。
-         打球中觉得拍子方向偏了，把肩键一端像遥控器一样指向电视，按 ${w.recenterKey} 键就能回中；也可以随时平放在桌上按住 ${w.combo} 重新校准。</p>
-         <div class="pr-progress"><i></i></div>
-         <p class="pr-still-state dim">等你放好：按键面朝上平放，肩键一端指向电视</p>`;
+         打球中觉得拍子方向偏了，同样指向电视按手机上的${w.recenterKey}就能回中；等球时拿稳不动，游戏也会自动去掉漂移。</p>`
+      : `<h2>校准：指向电视</h2>
+         <p class="pr-big">把 Joy-Con 的<b>肩键一端像遥控器一样指向电视</b>，<b>按住 ${w.combo}</b>。</p>
+         <p class="dim">这一步定下电视的方向。之后 Joy-Con 就是球拍：肩键一端是拍头，按键面是正手面（红面）。
+         打球中觉得拍子方向偏了，同样指向电视按住 ${w.combo}（或按 ${w.recenterKey}）就能回中；等球时拿稳不动，游戏也会自动去掉漂移。
+         放在桌上不动 2 秒会自动重测陀螺仪零点。</p>`;
     o.innerHTML = `
       <div class="pr-panel">
         ${body}
@@ -217,28 +189,5 @@ export class SetupFlow {
       this.input.recenter();
       this.finish('已跳过拍面校准');
     });
-  }
-
-  /** 每帧：Joy-Con 平放测零点的进度（零点测好后还要按住组合键才算校准完） */
-  private updatePoint(): void {
-    const dev = this.input.active;
-    if (!dev || dev.kind !== 'joycon') return;
-    const bar = this.overlay.querySelector<HTMLElement>('.pr-progress i');
-    const txt = this.overlay.querySelector<HTMLElement>('.pr-still-state');
-    if (!bar || !txt) return;
-    const w = deviceWords(this.input);
-    const st = dev.motion.flatStatus;
-    const fresh = dev.motion.frame.t - dev.motion.biasLearnedAt <= 2600 && st.phase !== 'idle';
-    const p = fresh ? 1 : st.phase === 'collecting' ? st.progress : 0;
-    bar.style.width = `${Math.round(p * 100)}%`;
-    txt.textContent = this.input.calibrating
-      ? `拿稳别动，测完陀螺仪零点就好… ${Math.round(p * 100)}%`
-      : fresh
-        ? `零点测好了：肩键一端指向电视，按住 ${w.combo}`
-        : st.phase === 'collecting'
-          ? `测量陀螺仪零点… ${Math.round(p * 100)}%（测完后按住 ${w.combo}）`
-          : st.phase === 'settling'
-            ? '放稳了，马上开始测量…'
-            : '等你放好：按键面朝上平放，肩键一端指向电视';
   }
 }

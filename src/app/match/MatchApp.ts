@@ -614,7 +614,7 @@ export class MatchApp {
     const recText = rec
       ? `<br/><span class="pr-rec">● 录制中 · 已录 ${rec.results} 分 · ${Math.floor(rec.elapsedMs / 60000)}:${String(Math.floor(rec.elapsedMs / 1000) % 60).padStart(2, '0')}</span>`
       : '';
-    this.statusEl.innerHTML = `${dev}<br/><span class="dim">对手：${cpuLevel(s.level).name} · ${s.points} 分制 · 暂停：手机「暂停」/ Joy-Con + / Esc · 回中（拍头指向电视按）：手机「回中」/ Joy-Con Y · 画面延迟补偿 ${latencyMs()}ms</span>${recText}`;
+    this.statusEl.innerHTML = `${dev}<br/><span class="dim">对手：${cpuLevel(s.level).name} · ${s.points} 分制 · 暂停：手机「暂停」/ Joy-Con + / Esc · 回中（指向电视按）：Joy-Con X + R 或 Y / 手机「回中」 · 画面延迟补偿 ${latencyMs()}ms</span>${recText}`;
   }
 
   private opt<T extends string | number | boolean>(
