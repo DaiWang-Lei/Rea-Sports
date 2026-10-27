@@ -4,7 +4,7 @@
  * 判定用计划附录里的初值（还没有实测数据，阈值都在 TOSS 里，之后按录制调）：
  *  - 竖直方向的比力（含重力，静止 = 1G）≥ 1.3G，连续至少 3 个样本，期间转得不快（|ω| < 6 rad/s，排除挥拍）；
  *  - 这段向上的加速结束时（比力回落到阈值以下，或已经持续 150ms）触发，期间的峰值 a_pk 决定高度：
- *    h = clamp(0.18 + 0.10·(a_pk − 1.3), 0.18, 0.60) 米；
+ *    h = clamp(0.45 + 0.15·(a_pk − 1.3), 0.45, 1.0) 米（2026-10-27 从 0.18–0.60 提高：抛得低发球太急）；
  *  - 触发后 0.6 秒内不再触发。
  */
 import { clamp } from '@/core/math';
@@ -23,9 +23,9 @@ export const TOSS = {
   /** 两次抛球之间至少隔多久（毫秒） */
   refractoryMs: 600,
   /** 高度（米，手以上）：hMin + hSlope·(a_pk − minG)，限制在 hMin..hMax */
-  hMin: 0.18,
-  hMax: 0.6,
-  hSlope: 0.1,
+  hMin: 0.45,
+  hMax: 1.0,
+  hSlope: 0.15,
 } as const;
 
 export interface TossFrame {

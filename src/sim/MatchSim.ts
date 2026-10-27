@@ -58,6 +58,8 @@ export type MatchEvent =
       smash: boolean;
       serve: boolean;
       rallyHits: number;
+      /** 强力发球（在抛球最高点附近击中） */
+      powerServe?: boolean;
       /** 人这一拍的时机、力度、旋转（电脑击球没有） */
       human?: HumanShot;
     }
@@ -104,6 +106,8 @@ export interface InFlight {
   popup: boolean;
   smash: boolean;
   serve: boolean;
+  /** 强力发球：画面上带拖尾 */
+  power?: boolean;
   /** 出手时刻 */
   t: number;
 }
@@ -385,6 +389,7 @@ export class MatchSim implements BrainHost {
       popup: false,
       smash: false,
       serve: true,
+      power: !!spec.power,
       t: this.t,
     };
     this.lastBallEventT = this.t;
@@ -399,6 +404,7 @@ export class MatchSim implements BrainHost {
       smash: false,
       serve: true,
       rallyHits: this.rallyHits,
+      ...(spec.power ? { powerServe: true } : {}),
       ...(shot ? { human: shot } : {}),
     });
     this.handleReferee(this.referee.feed({ type: 'serveHit', side }));

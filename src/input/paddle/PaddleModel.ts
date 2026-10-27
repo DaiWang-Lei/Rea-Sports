@@ -5,7 +5,7 @@
  * 设备本身就是球拍，握法固定（见 DEVICE_GRIP）：顶端（Joy-Con 肩键一端 / 手机顶端）是拍头，
  * 正面（Joy-Con 按键面 / 手机屏幕）是红面（正手面）。
  * 电视方向由「拍头指向电视」定（setHeading）：开局校准和打球中回中都是拍头像遥控器一样指着电视按键
- * （Joy-Con 按住 X + R，像 Nintendo Switch Sports）→ 得到 W → G 的偏航 A。
+ * （Joy-Con 按住 X + ZR，像 Nintendo Switch Sports）→ 得到 W → G 的偏航 A。
  * 之后球拍在 G 里的姿态 R = A · q · grip。球拍局部轴：+Y = 红面法向，+Z = 拍头方向，+X = Y × Z。
  * 打球中偏航会慢慢漂（Joy-Con 握在手里变热后零点会变），等球时由 trackHeading 去掉漂移。
  *

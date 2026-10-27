@@ -4,15 +4,21 @@
  *  - 接球：理想击球点只取弹起后的下降段；正反手站位在来球时按落点相对身体定一次；自动走位；
  *    HitResolver 判定时机（挥早先挂起，可被更快的反向挥拍取代），mapSwing 换算成落点、速度、旋转；
  *  - 和练习不同：未落台击球直接丢分；挥空 / 够不着时球照常飞，由裁判判「没接到」「两跳」；
- *  - 发球：抛球（按键或向上抖手柄）后挥拍。理想时刻 T_s = 最高点 + 0.12 秒，τ = Δt / 110ms 定左右（早打斜线），
- *    挥拍速度定长短快慢，拍面定旋转；落点限制在台内，保证先落本方台再过网。没打到的话球落下后重抛，不罚分。
+ *  - 发球：抛球（按键或向上抖手柄，越用力抛得越高，按键抛 0.75 米）后挥拍，在挥拍真正经过的时刻击球
+ *    （不像回球那样提前挥也等到理想时刻）：早挥打在高处，球慢、弧线高；晚挥打在低处。
+ *    理想时刻是球从最高点落回到手上方 25cm（台面以上约 43cm）的时候，前后 70ms 内击中是强力发球
+ *    （落点打深，物理上更快，画面带拖尾）。WSR 是在最高点打强力发球，但在真实物理里从台面以上近 1 米处发球
+ *    必须先陡陡地砸到本方台，出来的球又高又慢（最快约 5m/s），所以理想高度放在下落段。
+ *    比最高点早 0.1 秒以上的挥拍当准备动作忽略；之后一直到球掉到台面以上 10cm（重抛）都能发。
+ *    τ = Δt / 150ms 定左右（早打斜线，影响比回球小），挥拍速度定长短快慢，拍面定旋转；
+ *    落点限制在台内，保证先落本方台再过网。没打到的话球落下后重抛，不罚分。
  */
 import type { Tuning } from '@/config/tuning';
 import { clamp, lerp } from '@/core/math';
 import type { Rng } from '@/core/rng';
 import { vec3 } from '@/core/vec3';
-import type { BallState } from '../ball/physics';
-import { GRAVITY, type Side, sideDir, TABLE } from '../constants';
+import { type BallState, predict } from '../ball/physics';
+import { type Side, sideDir, SIM_DT, TABLE } from '../constants';
 import { type ContactPlan, planContact } from '../hit/contactZone';
 import {
   HitResolver,
@@ -38,12 +44,18 @@ import {
   type Stroke,
 } from './PlayerSim';
 
-/** 发球的时机窗口（毫秒）：τ = Δt / 110ms */
-export const SERVE_WINDOW_MS = 110;
-/** 理想发球时刻：抛球最高点之后这么久（秒） */
-export const SERVE_AFTER_APEX = 0.12;
-/** 按键抛球的高度（米，手以上）；向上抖手柄的高度按力度定（见 TossDetector） */
-export const BUTTON_TOSS_HEIGHT = 0.3;
+/** 发球的时机窗口（毫秒）：τ = Δt / 150ms，Δt 相对理想时刻 */
+export const SERVE_WINDOW_MS = 150;
+/** 离理想时刻这么近（毫秒）击中算强力发球 */
+export const POWER_SERVE_MS = 70;
+/** 按键抛球的高度（米，手以上，不计空气阻力）：约 0.65 秒后到理想击球点；向上抖手柄的高度按力度定（见 TossDetector） */
+export const BUTTON_TOSS_HEIGHT = 0.75;
+/** 理想击球点：球落回到手上方这么高（米，台面以上约 43cm） */
+export const SERVE_SWEET_ABOVE_HAND = 0.25;
+/** 比最高点早这么多（秒）的挥拍当准备动作忽略 */
+const SERVE_EARLIEST_BEFORE_APEX = 0.1;
+/** 发球的时机对左右的影响（以半台宽为单位，每 1 个 τ） */
+const SERVE_TIMING_TO_AIM = 0.25;
 
 export type HumanMissReason = 'early' | 'late' | 'reach';
 
@@ -57,6 +69,8 @@ export interface HumanShot {
   /** −1..1：正 = 上旋 */
   spin: number;
   serve: boolean;
+  /** 强力发球（在最高点附近击中） */
+  powerServe?: boolean;
 }
 
 export interface HumanHost {
@@ -115,10 +129,13 @@ export class HumanPlayer {
   ) {
     this.leniency = clamp(opts.leniency ?? 0.5, 0, 1);
     this.resolver = new HitResolver(resolverConfig(tune, windowMs));
+    // 太早的挥拍当准备动作忽略（不算挥空，球落下来还能再挥；界线按每次抛球的高度定，见 toss）；
+    // 晚的一直到重抛为止都算
     this.serveResolver = new HitResolver({
       ...resolverConfig(tune, SERVE_WINDOW_MS),
-      tauMin: -2,
-      tauMax: 2,
+      tauIgnore: -3,
+      tauMin: -3,
+      tauMax: 4,
     });
   }
 
@@ -192,10 +209,31 @@ export class HumanPlayer {
     const tApex = host.toss(this.side, height);
     if (!(tApex > 0)) return false;
     this.tossFrom = NaN;
-    const ideal = now + tApex + SERVE_AFTER_APEX;
-    this.serveAt = { ideal, apex: now + tApex };
+    // 按真实轨迹（带空气阻力）找最高点和理想击球点：球下落经过手上方 SERVE_SWEET_ABOVE_HAND 的时刻
     const b = host.ball;
-    const dt = ideal - now;
+    const sweetZ = b.p.z + SERVE_SWEET_ABOVE_HAND;
+    const pred = predict(b, now, 2, host.tune.physics);
+    let apex = now + tApex;
+    let topZ = -Infinity;
+    let ideal = NaN;
+    let at = b;
+    for (let i = 0; i < pred.states.length; i++) {
+      const st = pred.states[i];
+      if (st.p.z > topZ) {
+        topZ = st.p.z;
+        apex = now + i * SIM_DT;
+      }
+      if (st.v.z < 0 && st.p.z <= sweetZ) {
+        ideal = now + i * SIM_DT;
+        at = st;
+        break;
+      }
+    }
+    if (!Number.isFinite(ideal)) ideal = apex + 0.3;
+    this.serveAt = { ideal, apex };
+    // 早于「最高点前 0.1 秒」的挥拍忽略
+    const earliest = (apex - SERVE_EARLIEST_BEFORE_APEX - ideal) / (SERVE_WINDOW_MS / 1000);
+    this.serveResolver.cfg = { ...this.serveResolver.cfg, tauIgnore: earliest, tauMin: earliest };
     const plan: ContactPlan = {
       ok: true,
       receiver: this.side,
@@ -203,8 +241,8 @@ export class HumanPlayer {
       bounceT: -Infinity,
       bounceP: null,
       t: ideal,
-      p: vec3(b.p.x, b.p.y, b.p.z + b.v.z * dt - 0.5 * GRAVITY * dt * dt),
-      v: vec3(0, 0, b.v.z - GRAVITY * dt),
+      p: { ...at.p },
+      v: { ...at.v },
       w: vec3(),
       popup: false,
       prediction: { states: [], events: [], t0: now },
@@ -219,6 +257,12 @@ export class HumanPlayer {
     const serving = ph.kind === 'toss' && ph.server === this.side;
     const out = (serving ? this.serveResolver : this.resolver).onSwing(sw);
     if (out.type === 'ignore') return out;
+    // 发球在挥拍真正经过的时刻击球（球在哪就打在哪），不像回球那样等到理想时刻
+    const pend = this.serveResolver.pending;
+    if (serving && out.type === 'hit' && pend) {
+      pend.execAt = Math.max(sw.tContact, sw.tDetect);
+      out.execAt = pend.execAt;
+    }
     const me = host.player(this.side);
     const contact = !serving && this.plan ? { ...this.plan.p } : { ...host.ball.p };
     const anim = { start: host.t - 0.12, height: TABLE.height + 0.15, kind: null, contact };
@@ -326,7 +370,6 @@ export class HumanPlayer {
 
   private executeServe(host: HumanHost, due: PendingHit): void {
     const me = host.player(this.side);
-    const at = this.serveAt;
     this.serveResolver.end();
     this.serveAt = null;
     const dir = sideDir(this.side);
@@ -335,16 +378,22 @@ export class HumanPlayer {
     const q = swingPower(sw.wPeak);
     // 以发球者自己的左右为准：s = +1 正手，−1 反手；早打斜线
     const s = (due.stroke === 'fh' ? 1 : -1) * me.handed;
-    const u = clamp(s * 0.8 * due.tau, -1, 1);
+    const u = clamp(s * SERVE_TIMING_TO_AIM * due.tau, -1, 1);
     const xMax = TABLE.halfWidth - 0.1;
-    const nearApex = at ? clamp(1 - Math.abs(host.t - at.apex) / 0.18, 0, 1) : 0;
+    // 强力发球：挥拍时机（不是执行时刻：早一点的挥拍也在最高点执行）离最高点足够近
+    const powerServe = Math.abs(due.tau * SERVE_WINDOW_MS) <= POWER_SERVE_MS;
     const sigma = spinSigma(sw.features, this.leniency);
     const spec: ServeSpec = {
-      firstY: -dir * (0.45 + 0.65 * q),
-      second: { x: clamp(u * TABLE.halfWidth, -xMax, xMax) * rs, y: dir * (0.55 + 0.6 * q) },
-      speedH: lerp(4.5, 8.5, q) * host.pace * (1 + 0.12 * nearApex),
+      // 强力发球：先落本方台尾、再落对方台尾，弧线低平，物理上更快；普通发球落点浅一些
+      firstY: -dir * (powerServe ? 0.8 + 0.2 * q : 0.45 + 0.55 * q),
+      second: {
+        x: clamp(u * TABLE.halfWidth, -xMax, xMax) * rs,
+        y: dir * (powerServe ? 1.12 + 0.08 * q : 0.5 + 0.45 * q),
+      },
+      speedH: lerp(4.2, 7.5, q) * host.pace * (powerServe ? 1.3 : 1),
       topspin: sigma === 0 ? 20 : 160 * sigma,
       sidespin: 120 * sideSpinAmount(sw.features, s),
+      power: powerServe,
     };
     if (me.swing) {
       me.swing.hit = host.t;
@@ -357,6 +406,7 @@ export class HumanPlayer {
       power: q,
       spin: sigma,
       serve: true,
+      powerServe,
     });
   }
 

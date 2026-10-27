@@ -115,6 +115,8 @@ export interface ServeSpec {
   speedH: number;
   topspin: number;
   sidespin: number;
+  /** 强力发球（在抛球最高点附近击中）：画面上带拖尾 */
+  power?: boolean;
 }
 
 export function buildServe(p0: Vec3, spec: ServeSpec, tune: Tuning): BuiltShot {

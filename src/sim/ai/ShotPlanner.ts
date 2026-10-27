@@ -62,8 +62,8 @@ function rallyPressure(rallyHits: number): {
   return {
     threat: 0.03 * over,
     speed: 1 + 0.25 * aggression,
-    marginScale: 1 - 0.5 * aggression,
-    sigmaScale: 1 + 0.5 * aggression,
+    marginScale: 1 - 0.4 * aggression,
+    sigmaScale: 1 + 0.35 * aggression,
   };
 }
 

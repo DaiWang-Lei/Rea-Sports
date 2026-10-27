@@ -77,7 +77,7 @@ export interface MotionInputEvents {
   onPeak?: (e: PeakEventOut) => void;
   /** 向上抖手柄抛球（只在 tossEnabled 时给出） */
   onToss?: (device: InputDevice, toss: TossEvent) => void;
-  /** 校准 / 回中（Joy-Con 按住 X + R / ↑ + L，或游戏调 requestCalibration）的结果 */
+  /** 校准 / 回中（Joy-Con 按住 X + ZR / ↑ + ZL，或游戏调 requestCalibration）的结果 */
   onCalibrate?: (device: InputDevice, result: CalibrateResult) => void;
   onButton?: (b: LogicalButton, down: boolean, device: InputDevice) => void;
   onDevicesChanged?: () => void;
@@ -90,9 +90,9 @@ export interface MotionInputEvents {
 
 // 握法自 2026-10-23 起固定（见 DEVICE_GRIP），不再保存；以前存的 rea-grip-* 不再读取
 const HANDED_KEY = 'rea-handed';
-/** 校准 / 回中组合键（像 Nintendo Switch Sports）：Joy-Con R 按住 X + R，Joy-Con L 按住 ↑ + L */
+/** 校准 / 回中组合键（像 Nintendo Switch Sports）：Joy-Con R 按住 X + ZR，Joy-Con L 按住 ↑ + ZL */
 function calibrateCombo(side: 'L' | 'R', b: Buttons): boolean {
-  return side === 'R' ? b.x && b.r : b.up && b.l;
+  return side === 'R' ? b.x && b.zr : b.up && b.zl;
 }
 
 function loadJson<T>(key: string): T | null {

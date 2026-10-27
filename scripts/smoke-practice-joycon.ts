@@ -1,7 +1,7 @@
 /**
  * Joy-Con → 发球机练习 端到端冒烟测试（需要先 pnpm dev；不需要真手柄）：
  * 在页面里插一个模拟 Joy-Con（?debug=1 暴露的实例），每 15ms 送 3 个样本（和真手柄一样），陀螺带一点零点偏差。
- * 流程：平放（按键面朝上、肩键一端指向模拟的电视）→ 后台自动测好陀螺仪零点 → 按住 X + R
+ * 流程：平放（按键面朝上、肩键一端指向模拟的电视）→ 后台自动测好陀螺仪零点 → 按住 X + ZR
  * （直接调组合键的同一个入口 requestCalibration）→ 立起来 → 在理想击球时刻附近合成正手挥拍（绕竖直轴逆时针转）。
  * 检查：平放不动能自动学到零点（接近设定的偏差）、校准后画面里拍头朝前红面朝上、能正常回球、
  * 自动校正没有乱拉方向、页面没有报错。
@@ -102,7 +102,7 @@ for (let i = 0; i < 60; i++) {
   if (Number.isFinite(at)) break;
   await sleep(100);
 }
-// 肩键一端指向电视，按住 X + R
+// 肩键一端指向电视，按住 X + ZR
 await page.evaluate('window.__practice.input.requestCalibration()');
 for (let i = 0; i < 60 && (await state()).step === 'point'; i++) await sleep(100);
 console.log(

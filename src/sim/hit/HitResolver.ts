@@ -278,6 +278,11 @@ export interface MappedShot {
 
 const FULL_W = 22;
 const MIN_W = 5;
+/**
+ * 时机对左右落点的影响：u（以半台宽为单位）每 1 个 τ 偏移多少。2026-10-27 从 0.85 降到 0.62：
+ * 普通的时机偏差不再把球打出边线（早 / 晚约 90ms 打到离中线六成处），极早 / 极晚（τ 超过约 ±1.8）才出界
+ */
+const TIMING_TO_AIM = 0.62;
 
 /** 来球相对接球方的上旋分量（rad/s，正 = 上旋） */
 function incomingTopspin(v: Vec3, w: Vec3): number {
@@ -326,7 +331,7 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
 
   const rushed = ctx.reachError > m.reachNormal || (ctx.smashIn && Math.abs(ctx.tau) > 0.45);
   if (rushed) {
-    const u = clamp(s * 0.85 * ctx.tau * 0.6 + 0.2 * xSelf, -1.1, 1.1);
+    const u = clamp(s * TIMING_TO_AIM * ctx.tau * 0.6 + 0.2 * xSelf, -1.1, 1.1);
     return {
       rushed: true,
       power: q,
@@ -346,7 +351,11 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
 
   const heightAboveTable = ctx.contact.z - TABLE.height;
   if (ctx.popupIn && heightAboveTable >= 0.3 && ctx.wPeak >= 15 && Math.abs(ctx.tau) <= 0.8) {
-    const u = clamp(s * 0.85 * ctx.tau + 0.2 * xSelf + rng.normal(0, 0.05 * noise), -1.3, 1.3);
+    const u = clamp(
+      s * TIMING_TO_AIM * ctx.tau + 0.2 * xSelf + rng.normal(0, 0.05 * noise),
+      -1.3,
+      1.3
+    );
     return {
       rushed: false,
       power: q,
@@ -377,7 +386,7 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
   // ---- 左右：时机（早打斜线）+ 击球点位置 + 噪声 + 来球侧旋
   const sIn = incomingTopspin(ctx.vIn, ctx.wIn) / 250;
   let u =
-    s * 0.85 * ctx.tau +
+    s * TIMING_TO_AIM * ctx.tau +
     0.2 * xSelf +
     rng.normal(0, (0.04 + 0.06 * q) * noise) -
     (0.075 * ctx.wIn.z * rs) / 170;

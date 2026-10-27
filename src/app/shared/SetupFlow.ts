@@ -1,10 +1,10 @@
 /**
  * 连接与校准（练习、比赛共用）：连接设备 → 拍头像遥控器一样指向电视、按键（像 Nintendo Switch Sports）。
- *  - Joy-Con：肩键一端指向电视，按住 X + R（Joy-Con L：↑ + L）；按 Y / A 也行；
+ *  - Joy-Con：肩键一端指向电视，按住 X + ZR（Joy-Con L：↑ + ZL）；按 Y / A 也行；
  *  - 手机：顶端指向电视，按「确认」。
  * 和打球中的回中是同一个动作，立即完成。陀螺仪零点不用专门测：Joy-Con 放在桌上不动 2 秒会在后台自动重测。
  * 画在给定的遮罩层里；校准完成（或跳过）后调 onDone，选了键盘调 onKeyboard。
- * 打球中按住 X + R 回中的结果也由这里给出提示（onCalibrate）。
+ * 打球中按住 X + ZR 回中的结果也由这里给出提示（onCalibrate）。
  */
 import QRCode from 'qrcode';
 import type { Sfx } from '@/audio/Sfx';
@@ -27,7 +27,7 @@ export function deviceWords(input: MotionInput): {
   return {
     phone,
     head: phone ? '手机顶端' : '肩键一端',
-    combo: phone ? '「确认」' : left ? '↑ + L' : 'X + R',
+    combo: phone ? '「确认」' : left ? '↑ + ZL' : 'X + ZR',
     recenterKey: phone ? '「回中」' : left ? '↑' : 'Y',
   };
 }
@@ -82,7 +82,7 @@ export class SetupFlow {
 
   /**
    * 校准这一步的按键：「确认」「回中」（Joy-Con 的 A / Y、手机的按钮）都按指向电视校准；
-   * Joy-Con 的 X + R 组合键由 MotionInput 识别，结果走 onCalibrate。返回 true = 已处理
+   * Joy-Con 的 X + ZR 组合键由 MotionInput 识别，结果走 onCalibrate。返回 true = 已处理
    */
   onButton(b: string): boolean {
     if (this.step !== 'point' || (b !== 'confirm' && b !== 'recenter')) return false;

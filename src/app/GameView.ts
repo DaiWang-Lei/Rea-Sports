@@ -112,7 +112,11 @@ export class GameView {
     const nearBody = body('near');
     const farBody = body('far');
     const inFlight = s.inFlight;
-    this.trail = inFlight?.popup ? 'wobble' : inFlight?.smash ? 'streak' : 'normal';
+    this.trail = inFlight?.popup
+      ? 'wobble'
+      : inFlight?.smash || inFlight?.power
+        ? 'streak'
+        : 'normal';
     const frame: RenderFrame = {
       t,
       ball: {
@@ -160,7 +164,8 @@ export class GameView {
     switch (e.type) {
       case 'hit': {
         const p = this.sim.ball.p;
-        this.sfx.hit(Math.min(1, e.speed / 15), pan(p), e.smash);
+        this.sfx.hit(Math.min(1, e.speed / 15), pan(p), e.smash || !!e.powerServe);
+        if (e.powerServe) this.hud.flash('强力发球!', '', 0.9, 'big');
         if (e.oops) this.hud.flash('哎呀!', '', 0.9, 'bad');
         if (e.smash) {
           this.hud.flash('扣杀!', '', 0.9, 'big');

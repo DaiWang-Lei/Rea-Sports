@@ -1,5 +1,5 @@
 /**
- * 发球机练习页：连接设备 → 校准（拍头指向电视，Joy-Con 按住 X + R）→ 发球机送球，玩家挥拍回球。
+ * 发球机练习页：连接设备 → 校准（拍头指向电视，Joy-Con 按住 X + ZR）→ 发球机送球，玩家挥拍回球。
  * 每一球给出结果卡片（时机早晚、正反手、力度、旋转），可以调难度、落点区域和画面延迟补偿。
  */
 import './practice.css';
@@ -599,7 +599,7 @@ export class PracticeApp {
     const recText = rec
       ? `<br/><span class="pr-rec">● 录制中 · 已录 ${rec.results} / ${RECORD_MAX_BALLS} 球 · ${Math.floor(rec.elapsedMs / 60000)}:${String(Math.floor(rec.elapsedMs / 1000) % 60).padStart(2, '0')}</span>`
       : '';
-    this.statusEl.innerHTML = `${dev}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中（指向电视按）：Joy-Con X + R 或 Y / 手机「回中」 · 画面延迟补偿 ${this.latencyMs}ms</span>${recText}`;
+    this.statusEl.innerHTML = `${dev}<br/><span class="dim">暂停：手机「暂停」/ Joy-Con + / Esc · 回中（指向电视按）：Joy-Con X + ZR 或 Y / 手机「回中」 · 画面延迟补偿 ${this.latencyMs}ms</span>${recText}`;
   }
 
   private lastStatus = 0;

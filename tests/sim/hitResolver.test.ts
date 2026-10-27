@@ -70,7 +70,10 @@ describe('击球判定', () => {
 
   it('偏早 / 偏晚 / 太早忽略 / 慢挥拍偏早忽略', () => {
     let r = resolver();
-    expect(r.onSwing(swing({ tContact: 1.12 + 0.13 })).type).toBe('whiff');
+    // 窗口晚到 τ = 1.8（162ms）：晚 170ms 挥空，晚 150ms 还算打中
+    expect(r.onSwing(swing({ tContact: 1.12 + 0.17 })).type).toBe('whiff');
+    r = resolver();
+    expect(r.onSwing(swing({ tContact: 1.12 + 0.15 })).type).toBe('hit');
     r = resolver();
     expect(r.onSwing(swing({ tContact: 1.12 - 0.4 })).type).toBe('ignore');
     r = resolver();

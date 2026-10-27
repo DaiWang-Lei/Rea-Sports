@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Rng } from '@/core/rng';
 import { NO_FEATURES, type SwingInput } from '@/sim/hit/HitResolver';
 import { type MatchEvent, MatchSim } from '@/sim/MatchSim';
-import { SERVE_WINDOW_MS } from '@/sim/players/HumanPlayer';
+import { BUTTON_TOSS_HEIGHT } from '@/sim/players/HumanPlayer';
 
 function swingAt(
   id: number,
@@ -45,10 +45,13 @@ function play(sim: MatchSim, bot: Bot, maxT = 600, seed = 3): MatchEvent[] {
   let id = 1;
   let servedFor: object | null = null;
   let swungFor = -1;
+  // 每个来球只抽一次时机误差（每一帧重抽会偏早：哪一帧先抽到「到了」就挥）
+  let errFor = -1;
+  let err = 0;
   while (sim.phase.kind !== 'gameOver' && sim.t < maxT) {
     sim.tick();
     log.push(...sim.drainEvents());
-    if (bot.toss !== false && h.canToss(sim)) sim.humanToss('near', 0.3);
+    if (bot.toss !== false && h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
     const sa = h.serveAt;
     if (sa && bot.serveOffsetMs !== null && servedFor !== sa) {
       const tc = sa.ideal + (bot.serveOffsetMs ?? 0) / 1000;
@@ -59,10 +62,12 @@ function play(sim: MatchSim, bot: Bot, maxT = 600, seed = 3): MatchEvent[] {
     }
     const plan = h.plan;
     if (bot.sigmaMs !== null && plan && h.awaitingSwing && swungFor !== sim.rallyHits) {
+      if (errFor !== sim.rallyHits) {
+        errFor = sim.rallyHits;
+        err = rng.normal(0, bot.sigmaMs) / 1000;
+      }
       const volley = bot.volleyLead !== undefined && plan.t - plan.bounceT < 0.25;
-      const tc = volley
-        ? plan.bounceT - bot.volleyLead!
-        : plan.t + rng.normal(0, bot.sigmaMs) / 1000;
+      const tc = volley ? plan.bounceT - bot.volleyLead! : plan.t + err;
       if (sim.t >= tc - 0.07) {
         swungFor = sim.rallyHits;
         const dir = sim.players.near.stance === 'fh' ? 1 : -1;
@@ -102,7 +107,7 @@ describe('比赛：人对电脑', () => {
   });
 
   it('人发球：先落本方台再过网落对方台（不会发球失误）', () => {
-    for (const off of [-150, -60, 0, 60, 150]) {
+    for (const off of [-350, -200, -60, 0, 40, 70]) {
       const sim = new MatchSim({ seed: 9, cpu: { far: 3 } });
       const log: MatchEvent[] = [];
       let swung = false;
@@ -110,7 +115,7 @@ describe('比赛：人对电脑', () => {
       while (sim.t < 20 && !log.some((e) => e.type === 'point')) {
         sim.tick();
         log.push(...sim.drainEvents());
-        if (h.canToss(sim)) sim.humanToss('near', 0.3);
+        if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
         const sa = h.serveAt;
         if (sa && !swung && sim.t >= sa.ideal + off / 1000 - 0.07) {
           swung = true;
@@ -139,7 +144,7 @@ describe('比赛：人对电脑', () => {
           if (e.type === 'hit' && e.serve) served = true;
           if (served && e.type === 'bounce' && e.side === 'far') return e.p.x;
         }
-        if (h.canToss(sim)) sim.humanToss('near', 0.3);
+        if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
         const sa = h.serveAt;
         if (sa && !swung && sim.t >= sa.ideal + offMs / 1000 - 0.07) {
           swung = true;
@@ -148,11 +153,13 @@ describe('比赛：人对电脑', () => {
       }
       throw new Error('发球没有落到对方台面');
     };
-    const early = landingX(-1.2 * SERVE_WINDOW_MS);
+    // 理想时刻 = 球落回手上方 15cm；早的一侧到最高点前 0.1 秒，晚的一侧到球掉到台面高度（约 85ms）
+    const early = landingX(-350);
     const center = landingX(0);
-    const late = landingX(1.2 * SERVE_WINDOW_MS);
+    const late = landingX(60);
     expect(early).toBeLessThan(center - 0.3);
-    expect(late).toBeGreaterThan(center + 0.3);
+    expect(late).toBeGreaterThan(center + 0.04);
+    expect(late - early).toBeGreaterThan(0.4);
   });
 
   it('抛了球不挥拍：球落下后重抛，不罚分', () => {
@@ -163,13 +170,53 @@ describe('比赛：人对电脑', () => {
     expect(sim.scoring.score).toEqual({ near: 0, far: 0 });
   });
 
-  it('发球挥得太早：给出「挥早」，球落下后重抛', () => {
+  it('发球挥得太早（比最高点早 0.1 秒以上）：当准备动作忽略，不算挥空，球落下来再挥照样发出去', () => {
     const sim = new MatchSim({ seed: 6, cpu: { far: 3 } });
-    const log = play(sim, { sigmaMs: null, serveOffsetMs: -300 }, 4);
-    const whiffs = log.filter((e) => e.type === 'whiff' && e.side === 'near');
-    expect(whiffs.length).toBeGreaterThan(0);
-    expect(whiffs.every((e) => e.type === 'whiff' && e.reason === 'early' && e.serve)).toBe(true);
-    expect(points(log).length).toBe(0);
+    const h = sim.human('near')!;
+    const log: MatchEvent[] = [];
+    let early = false;
+    let onTime = false;
+    while (sim.t < 6 && !log.some((e) => e.type === 'hit' && e.serve)) {
+      sim.tick();
+      log.push(...sim.drainEvents());
+      if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+      const sa = h.serveAt;
+      if (sa && !early && sim.t >= sa.apex - 0.2 - 0.07) {
+        early = true;
+        expect(sim.humanSwing('near', swingAt(1, sim.t, sa.apex - 0.2, 1)).type).toBe('ignore');
+      }
+      if (sa && early && !onTime && sim.t >= sa.ideal - 0.07) {
+        onTime = true;
+        sim.humanSwing('near', swingAt(2, sim.t, sa.ideal, 1));
+      }
+    }
+    expect(log.some((e) => e.type === 'whiff')).toBe(false);
+    expect(log.filter((e) => e.type === 'toss').length).toBe(1);
+    expect(log.some((e) => e.type === 'hit' && e.serve)).toBe(true);
+  });
+
+  it('理想时刻（球落回手上方 15cm）前后 70ms 内击中是强力发球，比早挥打在高处的普通发球快得多', () => {
+    const serveAt = (offMs: number) => {
+      const sim = new MatchSim({ seed: 13, cpu: { far: 3 } });
+      const h = sim.human('near')!;
+      let swung = false;
+      while (sim.t < 6) {
+        sim.tick();
+        for (const e of sim.drainEvents()) if (e.type === 'hit' && e.serve) return e;
+        if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+        const sa = h.serveAt;
+        if (sa && !swung && sim.t >= sa.ideal + offMs / 1000 - 0.07) {
+          swung = true;
+          sim.humanSwing('near', swingAt(1, sim.t, sa.ideal + offMs / 1000, 1));
+        }
+      }
+      throw new Error('没有发出去');
+    };
+    const power = serveAt(30);
+    const normal = serveAt(-200);
+    expect(power.type === 'hit' && power.powerServe).toBe(true);
+    expect(normal.type === 'hit' && normal.powerServe).toBeFalsy();
+    expect(power.speed).toBeGreaterThan(normal.speed * 1.3);
   });
 
   it('只发球不回球：对方得分，原因是没接到 / 两跳', () => {
@@ -198,7 +245,7 @@ describe('比赛：人对电脑', () => {
     const h = sim.human('near')!;
     while (sim.phase.kind !== 'play' && sim.t < 10) {
       sim.tick();
-      if (h.canToss(sim)) sim.humanToss('near', 0.3);
+      if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
       const sa = h.serveAt;
       if (sa && sim.t >= sa.ideal - 0.07) sim.humanSwing('near', swingAt(1, sim.t, sa.ideal, 1));
     }

@@ -51,9 +51,12 @@ export function defaultTuning() {
       /** 时机归一化窗口 H（毫秒）：τ = Δt / H */
       window6Ms: 90,
       window11Ms: 75,
-      /** 视为击中的 τ 范围 */
-      tauMin: -1.7,
-      tauMax: 1.4,
+      /**
+       * 视为击中的 τ 范围（6 分制约早 198ms ～ 晚 162ms）。2026-10-27 从 −1.7 / 1.4 放宽：
+       * 和 WSR 一样以「打得到、方向有偏差」为主，挥空只留给明显太早 / 太晚
+       */
+      tauMin: -2.2,
+      tauMax: 1.8,
       /** 显示延迟默认值（毫秒），可在延迟校准里测量 */
       displayLatencyMs: 50,
       /** 挥拍开始到「接触」的预估提前量（毫秒） */
@@ -84,9 +87,12 @@ export function defaultTuning() {
       reachRushed: 0.45,
     },
     rules: {
-      /** 抛球后球落到手下方多少米、或多久没击球就重抛 */
-      tossDropBelow: 0.25,
-      tossTimeout: 1.2,
+      /**
+       * 抛球后球落到手下方多少米、或多久没击球就重抛。持球的手在台面以上 18cm：落到台面以上 10cm 以下
+       * 就发不出合法的球了（先落本方台再过网的弧线解不出来）
+       */
+      tossDropBelow: 0.08,
+      tossTimeout: 1.6,
       /** 两分之间的停顿（秒），以及多久后允许跳过 */
       betweenPoints: 2.0,
       betweenPointsSkippable: 0.8,
