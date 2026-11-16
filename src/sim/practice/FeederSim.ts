@@ -91,6 +91,8 @@ export type FeederEvent =
   | {
       type: 'hit';
       t: number;
+      /** 击球点 */
+      p: Vec3;
       kind: ShotKind;
       speed: number;
       oops: boolean;
@@ -495,6 +497,7 @@ export class FeederSim {
     this.events.push({
       type: 'hit',
       t: this.t,
+      p: { ...this.ball.p },
       kind: mapped.spec.kind,
       speed,
       oops: mapped.rushed,

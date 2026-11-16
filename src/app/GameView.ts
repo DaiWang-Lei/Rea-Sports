@@ -163,8 +163,8 @@ export class GameView {
     const pan = (p: { x: number }) => p.x / 1.5;
     switch (e.type) {
       case 'hit': {
-        const p = this.sim.ball.p;
-        this.sfx.hit(Math.min(1, e.speed / 15), pan(p), e.smash || !!e.powerServe);
+        this.sfx.hit(Math.min(1, e.speed / 15), pan(e.p), e.smash || !!e.powerServe);
+        this.renderer.hitEffect(e.p, e.smash || !!e.powerServe);
         if (e.powerServe) this.hud.flash('强力发球!', '', 0.9, 'big');
         if (e.oops) this.hud.flash('哎呀!', '', 0.9, 'bad');
         if (e.smash) {
@@ -179,6 +179,7 @@ export class GameView {
       }
       case 'bounce':
         this.sfx.table(e.impact, pan(e.p));
+        this.renderer.bounceEffect(e.p);
         break;
       case 'net':
         this.sfx.net(e.impact);

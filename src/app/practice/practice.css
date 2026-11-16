@@ -142,6 +142,13 @@
   font-size: 1.7vh;
   line-height: 1.6;
   max-width: 60vw;
+  background: rgba(10, 16, 24, 0.55);
+  border-radius: 8px;
+  padding: 0.6vh 1vw;
+}
+
+.pr-status:empty {
+  display: none;
 }
 
 .pr-swing {

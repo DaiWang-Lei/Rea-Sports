@@ -501,7 +501,8 @@ export class PracticeApp {
         this.sfx.beep(520, 0.05, 0.12);
         break;
       case 'hit':
-        this.sfx.hit(e.power, pan(this.sim.ball.p), e.smash);
+        this.sfx.hit(e.power, pan(e.p), e.smash);
+        this.renderer.hitEffect(e.p, e.smash);
         this.input.rumble(e.smash ? 'smash' : e.oops ? 'oops' : 'hit');
         if (e.oops) this.hud.flash('哎呀!', '', 0.9, 'bad');
         if (e.smash) this.hud.flash('扣杀!', '', 0.9, 'big');
@@ -514,6 +515,7 @@ export class PracticeApp {
         break;
       case 'bounce':
         this.sfx.table(e.impact, pan(e.p));
+        this.renderer.bounceEffect(e.p);
         break;
       case 'net':
         this.sfx.net(e.impact);

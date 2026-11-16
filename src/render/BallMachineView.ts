@@ -33,6 +33,9 @@ export class BallMachineView {
     stand.rotation.x = Math.PI / 2;
     stand.position.set(0, 0.05, -0.85);
     this.group.add(body, hopper, this.mouth, stand);
+    this.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.castShadow = true;
+    });
     this.group.visible = false;
     root.add(this.group);
   }

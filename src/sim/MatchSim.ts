@@ -52,6 +52,8 @@ export type MatchEvent =
       type: 'hit';
       t: number;
       side: Side;
+      /** 击球点 */
+      p: Vec3;
       kind: ShotKind;
       speed: number;
       oops: boolean;
@@ -418,6 +420,7 @@ export class MatchSim implements BrainHost {
       type: 'hit',
       t: this.t,
       side,
+      p: { ...this.ball.p },
       kind: 'serve',
       speed: Math.hypot(built.v0.x, built.v0.y),
       oops: false,
@@ -478,6 +481,7 @@ export class MatchSim implements BrainHost {
       type: 'hit',
       t: this.t,
       side,
+      p: { ...this.ball.p },
       kind: spec.kind,
       speed: Math.hypot(built.v0.x, built.v0.y),
       oops: !!spec.oops,

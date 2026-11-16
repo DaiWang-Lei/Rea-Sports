@@ -1,10 +1,23 @@
-/** 球、投在台面/地面上的影子（判断远近的关键）、拖尾（高球摇晃 / 扣杀拖影） */
+/**
+ * 球、投在台面/地面上的影子（判断远近的关键）、拖尾（高球摇晃 / 扣杀拖影）。
+ * 拖尾是一段由粗到细、由浓到淡的管子：每个历史位置一圈顶点，顶点带透明度。
+ */
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
 import { BALL, TABLE } from '@/sim/constants';
 
+const X_AXIS = new THREE.Vector3(1, 0, 0);
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+
 const VISUAL_SCALE = 1.25;
-const TRAIL_POINTS = 14;
+const TRAIL_POINTS = 16;
+/** 拖尾每一圈的顶点数 */
+const RADIAL = 6;
+const TRAIL_STYLE = {
+  normal: { keep: 0.1, color: 0xffffff, alpha: 0.45, width: 0.8 },
+  streak: { keep: 0.16, color: 0xffd166, alpha: 0.85, width: 1 },
+  wobble: { keep: 0.25, color: 0xffffff, alpha: 0.6, width: 0.8 },
+} as const;
 
 export type TrailStyle = 'normal' | 'wobble' | 'streak';
 
@@ -12,16 +25,16 @@ export class BallView {
   readonly ball: THREE.Mesh;
   private readonly shadow: THREE.Mesh;
   private readonly shadowMat: THREE.MeshBasicMaterial;
-  private readonly trail: THREE.Line;
+  private readonly trail: THREE.Mesh;
   private readonly trailGeo: THREE.BufferGeometry;
-  private readonly trailMat: THREE.LineBasicMaterial;
   private readonly history: Array<{ p: Vec3; t: number }> = [];
   style: TrailStyle = 'normal';
 
   constructor(root: THREE.Object3D) {
     this.ball = new THREE.Mesh(
       new THREE.SphereGeometry(BALL.radius * VISUAL_SCALE, 24, 16),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x444444, roughness: 0.35 })
+      // 太阳在远端身后，看到的多是球的背光面：自发光调高，保持白亮
+      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x9a9a9a, roughness: 0.35 })
     );
     root.add(this.ball);
 
@@ -35,16 +48,30 @@ export class BallView {
     root.add(this.shadow);
 
     this.trailGeo = new THREE.BufferGeometry();
+    const verts = TRAIL_POINTS * RADIAL;
     this.trailGeo.setAttribute(
       'position',
-      new THREE.BufferAttribute(new Float32Array(TRAIL_POINTS * 3), 3)
+      new THREE.BufferAttribute(new Float32Array(verts * 3), 3)
     );
-    this.trailMat = new THREE.LineBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.35,
-    });
-    this.trail = new THREE.Line(this.trailGeo, this.trailMat);
+    this.trailGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(verts * 4), 4));
+    const index: number[] = [];
+    for (let i = 0; i < TRAIL_POINTS - 1; i++) {
+      for (let j = 0; j < RADIAL; j++) {
+        const a = i * RADIAL + j;
+        const b = i * RADIAL + ((j + 1) % RADIAL);
+        index.push(a, a + RADIAL, b, b, a + RADIAL, b + RADIAL);
+      }
+    }
+    this.trailGeo.setIndex(index);
+    this.trail = new THREE.Mesh(
+      this.trailGeo,
+      new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
     this.trail.frustumCulled = false;
     root.add(this.trail);
   }
@@ -74,25 +101,52 @@ export class BallView {
     if (lastP && Math.hypot(p.x - lastP.x, p.y - lastP.y, p.z - lastP.z) > 0.6)
       this.history.length = 0;
     this.history.push({ p: { ...p }, t });
-    const keep = this.style === 'normal' ? 0.06 : this.style === 'streak' ? 0.12 : 0.25;
-    while (this.history.length > 2 && t - this.history[0].t > keep) this.history.shift();
+    const st = TRAIL_STYLE[this.style];
+    while (this.history.length > 2 && t - this.history[0].t > st.keep) this.history.shift();
     while (this.history.length > TRAIL_POINTS) this.history.shift();
-    const arr = this.trailGeo.getAttribute('position') as THREE.BufferAttribute;
+    this.buildTrail(t, st);
+  }
+
+  /** 每个历史位置一圈顶点：越旧越细、越淡（最新一圈和球一样粗，藏在球里） */
+  private buildTrail(t: number, st: (typeof TRAIL_STYLE)[TrailStyle]): void {
+    const pos = this.trailGeo.getAttribute('position') as THREE.BufferAttribute;
+    const col = this.trailGeo.getAttribute('color') as THREE.BufferAttribute;
     const n = this.history.length;
-    for (let i = 0; i < TRAIL_POINTS; i++) {
-      const e = this.history[Math.min(i, n - 1)];
-      let wx = 0;
-      let wz = 0;
-      if (this.style === 'wobble') {
-        const phase = (t - e.t) * 8 * Math.PI * 2;
-        wx = Math.sin(phase) * 0.02;
-        wz = Math.cos(phase) * 0.01;
+    const c = new THREE.Color(st.color);
+    const pts = this.history.map((e) => {
+      if (this.style !== 'wobble') return new THREE.Vector3(e.p.x, e.p.y, e.p.z);
+      const phase = (t - e.t) * 8 * Math.PI * 2;
+      return new THREE.Vector3(
+        e.p.x + Math.sin(phase) * 0.02,
+        e.p.y,
+        e.p.z + Math.cos(phase) * 0.01
+      );
+    });
+    const tan = new THREE.Vector3();
+    const u = new THREE.Vector3();
+    const v = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      tan.subVectors(pts[Math.min(i + 1, n - 1)], pts[Math.max(i - 1, 0)]);
+      if (tan.lengthSq() < 1e-10) tan.set(0, 1, 0);
+      tan.normalize();
+      u.crossVectors(tan, Math.abs(tan.z) < 0.9 ? Z_AXIS : X_AXIS).normalize();
+      v.crossVectors(tan, u);
+      const f = (i + 1) / n;
+      const r = BALL.radius * VISUAL_SCALE * st.width * f;
+      for (let j = 0; j < RADIAL; j++) {
+        const a = (j / RADIAL) * Math.PI * 2;
+        const k = i * RADIAL + j;
+        pos.setXYZ(
+          k,
+          pts[i].x + r * (Math.cos(a) * u.x + Math.sin(a) * v.x),
+          pts[i].y + r * (Math.cos(a) * u.y + Math.sin(a) * v.y),
+          pts[i].z + r * (Math.cos(a) * u.z + Math.sin(a) * v.z)
+        );
+        col.setXYZW(k, c.r, c.g, c.b, st.alpha * f * f);
       }
-      arr.setXYZ(i, e.p.x + wx, e.p.y, e.p.z + wz);
     }
-    arr.needsUpdate = true;
-    this.trailGeo.setDrawRange(0, n);
-    this.trailMat.opacity = this.style === 'normal' ? 0.25 : 0.6;
-    this.trailMat.color.set(this.style === 'streak' ? 0xffd166 : 0xffffff);
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+    this.trailGeo.setDrawRange(0, Math.max(0, n - 1) * RADIAL * 6);
   }
 }
