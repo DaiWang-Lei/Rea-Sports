@@ -51,7 +51,7 @@ export class CpuBrain {
 
   constructor(
     readonly side: Side,
-    level: number,
+    readonly level: number,
     private readonly rng: Rng
   ) {
     this.lv = cpuLevel(level);

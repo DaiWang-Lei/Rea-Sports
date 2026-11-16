@@ -8,6 +8,7 @@
   "include": [
     "src/core",
     "src/sim",
+    "src/rhythm/metrics.ts",
     "src/config/tuning.ts",
     "src/config/difficulty.ts",
     "src/config/rules.ts",

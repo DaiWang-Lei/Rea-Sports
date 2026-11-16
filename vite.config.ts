@@ -24,6 +24,7 @@ export default defineConfig({
         main: r('./index.html'),
         imu: r('./imu-debug.html'),
         phone: r('./phone.html'),
+        rhythm: r('./rhythm.html'),
       },
     },
   },

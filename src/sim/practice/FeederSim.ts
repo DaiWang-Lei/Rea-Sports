@@ -138,8 +138,8 @@ export class FeederSim {
   readonly rng: Rng;
   readonly player: PlayerSim;
   readonly resolver: HitResolver;
-  readonly windowMs: number;
-  readonly pace: number;
+  private readonly windowOverride: number | undefined;
+  private readonly paceOverride: number | undefined;
   level: FeedLevel;
   zone: FeedZone;
   leniency: number;
@@ -182,8 +182,8 @@ export class FeederSim {
     this.zone = opts.zone ?? 'mixed';
     this.leniency = opts.leniency ?? 0.5;
     this.interval = opts.interval ?? 1.4;
-    this.windowMs = opts.windowMs ?? this.tune.timing.window6Ms;
-    this.pace = opts.pace ?? this.tune.shot.pace6;
+    this.windowOverride = opts.windowMs;
+    this.paceOverride = opts.pace;
     this.player = createPlayer(
       'near',
       opts.handed ?? 1,
@@ -193,6 +193,20 @@ export class FeederSim {
     );
     this.resolver = new HitResolver(resolverConfig(this.tune, this.windowMs));
     this.parkBall();
+  }
+
+  /** 时机窗口 H（毫秒）与节奏倍率：没有指定时每次读取都按当前参数（调参面板改了立即生效） */
+  get windowMs(): number {
+    return this.windowOverride ?? this.tune.timing.window6Ms;
+  }
+
+  get pace(): number {
+    return this.paceOverride ?? this.tune.shot.pace6;
+  }
+
+  /** 调参面板改了参数：刷新判定窗口 */
+  applyTuning(): void {
+    this.resolver.cfg = resolverConfig(this.tune, this.windowMs);
   }
 
   get handed(): 1 | -1 {

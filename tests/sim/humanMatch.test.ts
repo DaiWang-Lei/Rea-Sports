@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { Rng } from '@/core/rng';
 import { NO_FEATURES, type SwingInput } from '@/sim/hit/HitResolver';
 import { type MatchEvent, MatchSim } from '@/sim/MatchSim';
-import { BUTTON_TOSS_HEIGHT } from '@/sim/players/HumanPlayer';
 
 function swingAt(
   id: number,
@@ -51,7 +50,8 @@ function play(sim: MatchSim, bot: Bot, maxT = 600, seed = 3): MatchEvent[] {
   while (sim.phase.kind !== 'gameOver' && sim.t < maxT) {
     sim.tick();
     log.push(...sim.drainEvents());
-    if (bot.toss !== false && h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+    if (bot.toss !== false && h.canToss(sim))
+      sim.humanToss('near', sim.tune.serve.buttonTossHeight);
     const sa = h.serveAt;
     if (sa && bot.serveOffsetMs !== null && servedFor !== sa) {
       const tc = sa.ideal + (bot.serveOffsetMs ?? 0) / 1000;
@@ -115,7 +115,7 @@ describe('比赛：人对电脑', () => {
       while (sim.t < 20 && !log.some((e) => e.type === 'point')) {
         sim.tick();
         log.push(...sim.drainEvents());
-        if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+        if (h.canToss(sim)) sim.humanToss('near', sim.tune.serve.buttonTossHeight);
         const sa = h.serveAt;
         if (sa && !swung && sim.t >= sa.ideal + off / 1000 - 0.07) {
           swung = true;
@@ -144,7 +144,7 @@ describe('比赛：人对电脑', () => {
           if (e.type === 'hit' && e.serve) served = true;
           if (served && e.type === 'bounce' && e.side === 'far') return e.p.x;
         }
-        if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+        if (h.canToss(sim)) sim.humanToss('near', sim.tune.serve.buttonTossHeight);
         const sa = h.serveAt;
         if (sa && !swung && sim.t >= sa.ideal + offMs / 1000 - 0.07) {
           swung = true;
@@ -179,7 +179,7 @@ describe('比赛：人对电脑', () => {
     while (sim.t < 6 && !log.some((e) => e.type === 'hit' && e.serve)) {
       sim.tick();
       log.push(...sim.drainEvents());
-      if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+      if (h.canToss(sim)) sim.humanToss('near', sim.tune.serve.buttonTossHeight);
       const sa = h.serveAt;
       if (sa && !early && sim.t >= sa.apex - 0.2 - 0.07) {
         early = true;
@@ -203,7 +203,7 @@ describe('比赛：人对电脑', () => {
       while (sim.t < 6) {
         sim.tick();
         for (const e of sim.drainEvents()) if (e.type === 'hit' && e.serve) return e;
-        if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+        if (h.canToss(sim)) sim.humanToss('near', sim.tune.serve.buttonTossHeight);
         const sa = h.serveAt;
         if (sa && !swung && sim.t >= sa.ideal + offMs / 1000 - 0.07) {
           swung = true;
@@ -245,7 +245,7 @@ describe('比赛：人对电脑', () => {
     const h = sim.human('near')!;
     while (sim.phase.kind !== 'play' && sim.t < 10) {
       sim.tick();
-      if (h.canToss(sim)) sim.humanToss('near', BUTTON_TOSS_HEIGHT);
+      if (h.canToss(sim)) sim.humanToss('near', sim.tune.serve.buttonTossHeight);
       const sa = h.serveAt;
       if (sa && sim.t >= sa.ideal - 0.07) sim.humanSwing('near', swingAt(1, sim.t, sa.ideal, 1));
     }

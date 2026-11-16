@@ -4,6 +4,7 @@
  */
 import './practice.css';
 import { Sfx } from '@/audio/Sfx';
+import { tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
 import { type Vec3, vec3 } from '@/core/vec3';
 import type { SwingCommit } from '@/input/paddle/SwingDetector';
@@ -190,6 +191,9 @@ export class PracticeApp {
     void this.input.start().then(() => this.setup.render());
     // 冒烟测试 / 调试用：?debug=1 时把实例挂到 window 上
     if (new URLSearchParams(location.search).has('debug')) {
+      void import('@/debug/TuningPanel').then((m) =>
+        m.createTuningPanel(() => this.sim.applyTuning())
+      );
       (window as unknown as { __practice: PracticeApp }).__practice = this;
     }
     requestAnimationFrame(() => this.loop());
@@ -242,6 +246,7 @@ export class PracticeApp {
       zone: s.zone,
       leniency: s.leniency,
       handed: this.input?.handed ?? 1,
+      tune: tuning,
     });
     sim.pause(true);
     return sim;

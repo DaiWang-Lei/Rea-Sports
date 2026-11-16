@@ -40,6 +40,7 @@ pnpm dev          # 打开 https://localhost:5288
 | 和电脑对打 | https://localhost:5288/?mode=match    | 5 个等级的电脑对手，6 分或 11 分一局，自己发球、记分、结算         |
 | 发球机练习 | https://localhost:5288/?mode=practice | 用手机 / Joy-Con / 键盘挥拍回球，每球给出时机、正反手、力度、旋转  |
 | 体感调试页 | https://localhost:5288/imu-debug.html | 连接手机或 Joy-Con、看数据、检查清单、震动、录挥拍样本、看挥拍识别 |
+| 视频打点   | https://localhost:5288/rhythm.html    | 对照 WSR / Switch Sports Resort 实机视频测节奏，和仿真对比         |
 | 手机控制器 | 扫调试页上的二维码                    | 手机当球拍                                                         |
 | 自动演示   | https://localhost:5288/?mode=autoplay | 电脑对电脑，看物理/规则/AI/画面/声音                               |
 
@@ -93,6 +94,18 @@ pnpm dev          # 打开 https://localhost:5288
    暂停菜单里可以调宽容度、画面延迟补偿（和练习共用，按屏幕记）、持拍手、时机提示，也可以「录制这局」：
    这一局打完或 10 分钟自动停止并下载，用 `pnpm analyze:practice` 分析。
 
+## 调手感（M4）
+
+- **调参面板**：任何游戏页的网址加上 `?debug=1`（首页有「调手感」入口，就是 `?mode=match&debug=1`），
+  右上角出现「手感参数」面板：时机窗口、早晚对左右的影响、发球、抖手柄抛球、球速、击球点、走位、规则节奏、物理、
+  电脑各级。拖动立即生效（判定窗口、电脑走位下一拍就用新值），改动存在本机，所有页面都套用；
+  首页会提示「正在用改过的手感参数」，可以一键恢复默认。面板底部能把改动导出成 JSON 发给开发者，或导入别人的。
+- **视频打点**（`rhythm.html`）：把 WSR / Switch Sports Resort 的乒乓视频拖进去，暂停后用 ← → 逐帧，
+  在对应画面按键打点：H 击球、B 落台、T 抛球离手、S 发球击球、X 扣杀击球、E 回合结束，⌫ 删掉最近的点。
+  页面算出两次击球的间隔、击球到落台、扣杀到落台、落台到击球、抛球到发球、发球到落对方台的中位数，
+  再「跑 10 局电脑对电脑」（用当前的手感参数）并排对比，差在 ±10% 以内显示为绿色。
+  打的点按视频记在本机，可以导出 / 导入 JSON。
+
 ## 连接 Joy-Con（macOS）
 
 1. 「系统设置 → 蓝牙」；按住 Joy-Con 导轨侧面的小圆形配对键，直到指示灯来回闪烁，在列表里点「连接」。
@@ -122,6 +135,7 @@ pnpm smoke:practice-phone       # 模拟一台手机放平指向电视校准 →
 pnpm smoke:practice-joycon      # 模拟一台 Joy-Con 平放自动测零点 → 指向电视按住 X + ZR 校准 → 挥拍回球（需先 pnpm dev）
 pnpm smoke:match [网址]         # 比赛冒烟测试：键盘模式打完一整局（中途暂停一次），出结算页
 pnpm smoke:match-joycon         # 模拟一台 Joy-Con：向上抖手柄抛球 → 发球 → 回球 → 录制下载（需先 pnpm dev）
+pnpm smoke:tools                # 调参面板（改参数、存本机、恢复默认）和视频打点页（打点、指标、仿真对比）
 pnpm analyze:practice xxx.json  # 分析「录制这局」的文件（练习逐球、比赛逐分）
 pnpm analyze:imu fixtures/imu/xxx.json   # 分析录制：采样率、丢包、蓝牙延迟、挥拍
 pnpm eval:swing fixtures/imu/xxx.json    # 在录制上跑挥拍识别
@@ -144,7 +158,8 @@ src/audio/     程序化音效
 src/ui/        画面文字层（比分、提示）
 src/app/       入口、自动演示、和电脑对打（match/）、发球机练习页（practice/）、
                两者共用的连接与校准、延迟补偿（shared/）、体感输入管理（input/）
-src/debug/     体感调试页
+src/debug/     体感调试页、调参面板
+src/rhythm/    视频打点页与节奏指标（metrics.ts 是纯逻辑）
 src/phone/     手机控制器页
 server/        开发服务器插件：手机数据的 WebSocket 中转、局域网地址
 src/net/       极简 MQTT 客户端、WebRTC 握手约定
@@ -163,6 +178,6 @@ scripts/       soak（批量对局）、bench-solver
 - [x] M1 物理 / 规则 / 电脑 AI / 自动演示
 - [x] M2 挥拍识别 + 击球判定 + 发球机练习（手机 / Joy-Con / 键盘）—— **待实机试打**
 - [x] M3 和电脑对打：发球（按键 / 向上抖手柄）、选对手和分制、比分、震动、暂停（断开自动暂停）、结算 —— **待实机试打**
-- [ ] M4 对照 WSR 视频调手感
+- [ ] M4 对照 WSR 视频调手感 —— 工具已就绪（调参面板、视频打点），等实机视频打点后逐项调
 
 第三方代码声明见 `NOTICE`。

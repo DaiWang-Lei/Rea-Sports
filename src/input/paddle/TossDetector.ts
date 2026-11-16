@@ -26,7 +26,7 @@ export const TOSS = {
   hMin: 0.45,
   hMax: 1.0,
   hSlope: 0.15,
-} as const;
+};
 
 export interface TossFrame {
   /** 样本时刻（毫秒） */

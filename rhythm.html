@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2240%22 cy=%2240%22 r=%2230%22 fill=%22%23d62828%22/%3E%3Crect x=%2252%22 y=%2258%22 width=%2214%22 height=%2236%22 rx=%225%22 transform=%22rotate(-45 59 76)%22 fill=%22%23c9a46a%22/%3E%3Ccircle cx=%2278%22 cy=%2224%22 r=%2210%22 fill=%22%23fff%22/%3E%3C/svg%3E"
+    />
+    <title>视频打点</title>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <h1>视频打点：对照实机视频测节奏</h1>
+        <a href="./">返回首页</a>
+      </header>
+      <div class="rh-layout">
+        <section class="card rh-video-card">
+          <div class="rh-drop" id="drop">
+            <video id="video" playsinline></video>
+            <div class="rh-drop-hint" id="drop-hint">
+              把 WSR / Switch Sports Resort 的乒乓视频拖到这里，或
+              <label class="rh-file"
+                >选择文件<input type="file" id="file" accept="video/*"
+              /></label>
+            </div>
+          </div>
+          <div class="rh-bar">
+            <button id="play">播放 / 暂停</button>
+            <select id="rate">
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+            </select>
+            <select id="fps">
+              <option value="60" selected>60 帧/秒</option>
+              <option value="30">30 帧/秒</option>
+            </select>
+            <span class="rh-time" id="time">—</span>
+          </div>
+          <div class="rh-keys" id="keys"></div>
+        </section>
+        <section class="card rh-side">
+          <h2>打的点 <span class="dim" id="count"></span></h2>
+          <ol class="rh-marks" id="marks"></ol>
+          <div class="rh-actions">
+            <button id="export">导出 JSON</button>
+            <label class="rh-file"
+              >导入 JSON<input type="file" id="import" accept=".json,application/json"
+            /></label>
+            <button id="clear">清空</button>
+          </div>
+        </section>
+      </div>
+      <section class="card">
+        <header class="rh-cmp-head">
+          <h2>和我们的仿真对比</h2>
+          <div class="rh-bar">
+            <select id="level"></select>
+            <select id="points">
+              <option value="6" selected>6 分制</option>
+              <option value="11">11 分制</option>
+            </select>
+            <button class="primary" id="run">跑 10 局电脑对电脑</button>
+          </div>
+        </header>
+        <table class="rh-table" id="table"></table>
+      </section>
+    </div>
+    <script type="module" src="/src/rhythm/rhythm.ts"></script>
+  </body>
+</html>

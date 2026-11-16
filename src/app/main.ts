@@ -5,6 +5,11 @@ import { MatchSim } from '@/sim/MatchSim';
 import { GameView } from './GameView';
 import { MatchApp } from './match/MatchApp';
 import { PracticeApp } from './practice/PracticeApp';
+import { loadOverrides, overrideCount, resetOverrides } from './shared/tuningStore';
+import { tuning } from '@/config/tuning';
+
+// 调参面板改过的手感参数（存在本机）：所有模式都先套用
+loadOverrides();
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app')!;
@@ -21,11 +26,16 @@ function startAutoplay(): void {
   const b = num('b', 3);
   const points = num('points', 6) === 11 ? 11 : 6;
   let seed = num('seed', Math.floor(Math.random() * 1e9));
-  const make = () => new MatchSim({ seed, points, cpu: { near: a, far: b } });
+  const make = () => new MatchSim({ seed, points, cpu: { near: a, far: b }, tune: tuning });
   const view = new GameView(app, make(), {
     names: { near: `近端·${cpuLevel(a).name}`, far: `远端·${cpuLevel(b).name}` },
     alwaysShowScore: true,
   });
+  if (params.has('debug')) {
+    void import('@/debug/TuningPanel').then((m) =>
+      m.createTuningPanel(() => view.sim.applyTuning())
+    );
+  }
   view.timeScale = num('speed', 1);
   // 调试用：开局先快进若干秒（截图/检查对打中的画面）
   const skip = num('skip', 0);
@@ -90,6 +100,14 @@ function showMenu(): void {
           <strong>发球机练习（手机 / Joy-Con / 键盘）</strong>
           <span>M2：真正用挥拍回球。每一球告诉你早了还是晚了、正手还是反手、力度和旋转</span>
         </a>
+        <a class="menu-item" href="?mode=match&debug=1">
+          <strong>调手感（对打 + 调参面板）</strong>
+          <span>M4：边打边改时机窗口、发球、球速、电脑各级等参数，改动存在本机，可以导出发给开发者</span>
+        </a>
+        <a class="menu-item" href="rhythm.html">
+          <strong>视频打点（对照实机视频测节奏）</strong>
+          <span>M4：在 WSR / Switch Sports Resort 的视频里给击球、落台、抛球打点，和我们的仿真比节奏</span>
+        </a>
         <a class="menu-item" href="imu-debug.html">
           <strong>体感调试（手机 / Joy-Con）</strong>
           <span>M0：扫码连手机或配对 Joy-Con、看数据、跑检查清单、录挥拍样本</span>
@@ -108,7 +126,16 @@ function showMenu(): void {
         </a>
       </div>
       <p class="dim small">自动演示可加参数：a、b = 两边电脑等级 1–5，points = 6 或 11，speed = 慢放倍率（如 0.3）。</p>
+      ${
+        overrideCount()
+          ? `<p class="small warn">正在用改过的手感参数（${overrideCount()} 项）<button data-act="reset-tuning">恢复默认</button></p>`
+          : ''
+      }
     </div>`;
+  app.querySelector('[data-act="reset-tuning"]')?.addEventListener('click', () => {
+    resetOverrides();
+    showMenu();
+  });
 }
 
 const mode = params.get('mode');

@@ -6,13 +6,13 @@
 import '../practice/practice.css';
 import './match.css';
 import { CPU_LEVELS, cpuLevel } from '@/config/difficulty';
+import { tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
 import type { SwingCommit } from '@/input/paddle/SwingDetector';
 import type { TossEvent } from '@/input/paddle/TossDetector';
 import type { Side } from '@/sim/constants';
 import type { SwingInput } from '@/sim/hit/HitResolver';
 import { type MatchEvent, MatchSim } from '@/sim/MatchSim';
-import { BUTTON_TOSS_HEIGHT } from '@/sim/players/HumanPlayer';
 import { type PointReason, REASON_TEXT } from '@/sim/rally/Referee';
 import { GameView } from '../GameView';
 import { MotionInput, type SwingEventOut } from '../input/MotionInput';
@@ -217,6 +217,9 @@ export class MatchApp {
     void this.input.start().then(() => this.setup.render());
     // 冒烟测试 / 调试用：?debug=1 时把实例挂到 window 上
     if (new URLSearchParams(location.search).has('debug')) {
+      void import('@/debug/TuningPanel').then((m) =>
+        m.createTuningPanel(() => this.sim.applyTuning())
+      );
       (window as unknown as { __match: MatchApp }).__match = this;
     }
     requestAnimationFrame(() => this.loop());
@@ -271,6 +274,7 @@ export class MatchApp {
       cpu: { far: s.level },
       handed: { near: this.input?.handed ?? 1 },
       leniency: s.leniency,
+      tune: tuning,
     });
   }
 
@@ -407,7 +411,7 @@ export class MatchApp {
     if (step !== 'play' || this.paused || e.repeat) return;
     if (k === ' ') {
       e.preventDefault();
-      if (!this.tryToss('key', BUTTON_TOSS_HEIGHT)) this.sim.skipBetweenPoints();
+      if (!this.tryToss('key', this.sim.tune.serve.buttonTossHeight)) this.sim.skipBetweenPoints();
       return;
     }
     if (k === 'f' || k === 'j') {
@@ -461,7 +465,7 @@ export class MatchApp {
       return;
     }
     // A：轮到你发球时抛球；两分之间跳过停顿
-    if (b === 'confirm' && !this.tryToss('button', BUTTON_TOSS_HEIGHT)) {
+    if (b === 'confirm' && !this.tryToss('button', this.sim.tune.serve.buttonTossHeight)) {
       this.sim.skipBetweenPoints();
     }
   }

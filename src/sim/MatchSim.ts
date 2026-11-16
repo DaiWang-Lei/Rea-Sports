@@ -140,8 +140,6 @@ export class MatchSim implements BrainHost {
   readonly players: Record<Side, PlayerSim>;
   readonly brains: Partial<Record<Side, CpuBrain>> = {};
   readonly humans: Partial<Record<Side, HumanPlayer>> = {};
-  readonly pace: number;
-  readonly windowMs: number;
   readonly points: 6 | 11;
 
   t = 0;
@@ -173,8 +171,6 @@ export class MatchSim implements BrainHost {
     this.tune = opts.tune ?? createTuning();
     this.rng = new Rng(opts.seed ?? 1);
     this.points = opts.points ?? 6;
-    this.pace = this.points === 11 ? this.tune.shot.pace11 : this.tune.shot.pace6;
-    this.windowMs = this.points === 11 ? this.tune.timing.window11Ms : this.tune.timing.window6Ms;
     this.scoring = new Scoring({
       target: this.points,
       drawAt: opts.drawAt === undefined ? 20 : opts.drawAt,
@@ -184,13 +180,8 @@ export class MatchSim implements BrainHost {
       const level = opts.cpu?.[side];
       const isCpu = level !== undefined;
       const limits = isCpu
-        ? {
-            vMax: cpuLevel(level).vMax,
-            aMax: cpuLevel(level).aMax,
-            gain: this.tune.mover.gain,
-            yFactor: this.tune.mover.yFactor,
-          }
-        : (opts.humanLimits ?? DEFAULT_HUMAN_LIMITS);
+        ? this.cpuLimits(level)
+        : { ...(opts.humanLimits ?? DEFAULT_HUMAN_LIMITS) };
       if (isCpu) this.brains[side] = new CpuBrain(side, level, this.rng);
       else {
         this.humans[side] = new HumanPlayer(side, this.rng, this.tune, this.windowMs, {
@@ -202,6 +193,35 @@ export class MatchSim implements BrainHost {
     this.players = { near: mk('near'), far: mk('far') };
     this.phase = { kind: 'preServe', server: this.scoring.server(), since: 0 };
     this.startPoint();
+  }
+
+  /** 节奏倍率（6 / 11 分制），每次读取都按当前参数（调参面板改了立即生效） */
+  get pace(): number {
+    return this.points === 11 ? this.tune.shot.pace11 : this.tune.shot.pace6;
+  }
+
+  /** 时机归一化窗口 H（毫秒） */
+  get windowMs(): number {
+    return this.points === 11 ? this.tune.timing.window11Ms : this.tune.timing.window6Ms;
+  }
+
+  private cpuLimits(level: number): MoverLimits {
+    const lv = cpuLevel(level);
+    return {
+      vMax: lv.vMax,
+      aMax: lv.aMax,
+      gain: this.tune.mover.gain,
+      yFactor: this.tune.mover.yFactor,
+    };
+  }
+
+  /** 调参面板改了参数：刷新开局时算好的东西（人的判定窗口、电脑的走位限制） */
+  applyTuning(): void {
+    for (const side of SIDES) {
+      this.humans[side]?.applyTuning(this.tune, this.windowMs);
+      const b = this.brains[side];
+      if (b) Object.assign(this.players[side].limits, this.cpuLimits(b.level));
+    }
   }
 
   player(side: Side): PlayerSim {
