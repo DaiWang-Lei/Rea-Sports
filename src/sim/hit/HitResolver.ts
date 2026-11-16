@@ -371,9 +371,9 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
   const topspin = sigma > 0 ? 40 + 220 * sigma * (0.6 + 0.4 * q) : 30 + 230 * sigma;
   const sidespin = 170 * sideSpinAmount(ft, s);
 
-  // ---- 速度
+  // ---- 速度：挥得越快球越快，但范围窄。NSSR 实机视频里真人回球约 0.55–0.63 秒落到对方台
   const vInH = Math.hypot(ctx.vIn.x, ctx.vIn.y);
-  const speedH = Math.max(lerp(5.5, 12.5, q ** 0.85) * ctx.pace, 0.4 * vInH);
+  const speedH = Math.max(lerp(3.8, 6.2, q ** 0.85) * ctx.pace, 0.4 * vInH);
 
   // ---- 左右：时机（早打斜线）+ 击球点位置 + 噪声 + 来球侧旋
   const sIn = incomingTopspin(ctx.vIn, ctx.wIn) / 250;

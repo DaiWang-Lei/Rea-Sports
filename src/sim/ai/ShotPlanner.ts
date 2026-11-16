@@ -67,12 +67,19 @@ function rallyPressure(rallyHits: number): {
   };
 }
 
+/**
+ * 击球点来球水平速度的基准和跨度（米/秒）：比基准每快一个跨度，威胁 +0.4。
+ * 按 NSSR 的节奏（回球约 0.6 秒落到对方台），击球点来球速度大多在 2.3–2.7 m/s。
+ */
+const THREAT_SPEED_REF = 3.3;
+const THREAT_SPEED_SPAN = 2.2;
+
 /** 来球威胁（越大越难接好） */
 export function incomingThreat(contact: ContactPlan, smash: boolean): number {
   const vin = Math.hypot(contact.v.x, contact.v.y);
   const win = Math.hypot(contact.w.x, contact.w.y, contact.w.z);
   return (
-    (0.4 * (vin - 8)) / 6 +
+    (0.4 * (vin - THREAT_SPEED_REF)) / THREAT_SPEED_SPAN +
     (0.3 * win) / 250 +
     (0.2 * Math.abs(contact.p.x)) / TABLE.halfWidth +
     (smash ? 0.5 : 0)

@@ -5,6 +5,8 @@
  * 对时机误差 45ms 的玩家，约四成回球是「哎呀」高球，一半左右的失分是追不到球漏接，回合碎、像在欺负电脑。
  * 2026-11-16 起各级回球速度收拢到差不多：NSSR 实机视频里不论对手强弱，「击球 → 落到对方台」都在 0.53–0.62 秒、
  * 两次击球间隔约 0.9 秒，高等级不靠球快，靠落点、旋转和反应。以前冠军级快到 0.41 秒 / 0.64 秒。
+ * 玩家的回球也放慢到同样的节奏后，电脑总能及时到位，不再因为追不上快球而回出高球，
+ * 所以低级别的「偶尔回出高球」改由抗压阈值 composure 产生（入门、初级约两成来球、冠军约 8%）。
  */
 
 export interface CpuLevel {
@@ -55,7 +57,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.05,
     predSigma: 0.12,
     feintP: 0,
-    composure: 0.5,
+    composure: 0.0,
     clearanceSigma: 0.04,
   },
   {
@@ -75,7 +77,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.15,
     predSigma: 0.1,
     feintP: 0,
-    composure: 0.6,
+    composure: 0.02,
     clearanceSigma: 0.033,
   },
   {
@@ -95,7 +97,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.3,
     predSigma: 0.08,
     feintP: 0.05,
-    composure: 0.7,
+    composure: 0.24,
     clearanceSigma: 0.026,
   },
   {
@@ -115,7 +117,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.45,
     predSigma: 0.07,
     feintP: 0.1,
-    composure: 0.78,
+    composure: 0.45,
     clearanceSigma: 0.02,
   },
   {
@@ -135,7 +137,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.6,
     predSigma: 0.06,
     feintP: 0.15,
-    composure: 0.88,
+    composure: 0.6,
     clearanceSigma: 0.014,
   },
 ];

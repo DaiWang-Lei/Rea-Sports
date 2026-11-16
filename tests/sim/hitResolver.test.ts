@@ -190,11 +190,12 @@ describe('击球映射', () => {
     expect(avgX({ tau: -1, stroke: 'bh' })).toBeGreaterThan(avgX({ tau: 0, stroke: 'bh' }) + 0.3);
   });
 
-  it('挥得越快球越快', () => {
+  it('挥得越快球越快，但范围窄（NSSR 的回球都约 0.6 秒到对方台）', () => {
     const rng = new Rng(1);
     const slow = mapSwing(ctx({ wPeak: 8 }), rng, tune).spec.speedH;
     const fast = mapSwing(ctx({ wPeak: 22 }), rng, tune).spec.speedH;
-    expect(fast).toBeGreaterThan(slow * 1.6);
+    expect(fast).toBeGreaterThan(slow * 1.3);
+    expect(fast).toBeLessThan(slow * 1.6);
   });
 
   it('拍面前压 → 上旋；后仰 → 下旋', () => {
