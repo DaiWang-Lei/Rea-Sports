@@ -37,6 +37,8 @@ const GROUPS: Array<[string, string, Record<string, number>, Spec[]]> = [
     tuning.serve,
     [
       ['buttonTossHeight', '按键抛高（m）', 0.2, 1.4, 0.01],
+      ['cpuTossMin', '电脑抛高下限（m）', 0.3, 2.5, 0.01],
+      ['cpuTossMax', '电脑抛高上限（m）', 0.3, 2.5, 0.01],
       ['sweetAboveHand', '理想击球点（手上方 m）', 0, 0.6, 0.01],
       ['windowMs', '窗口（ms）', 50, 300, 1],
       ['powerMs', '强力发球（±ms）', 0, 200, 1],

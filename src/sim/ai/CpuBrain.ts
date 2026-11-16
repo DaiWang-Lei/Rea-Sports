@@ -1,15 +1,16 @@
 /**
  * 电脑对手：反应延迟 → 带噪声地预测击球点并走位 → 落台时决定回什么球（引拍高度暗示旋转）→
- * 在「理想时刻 + 时机误差」挥拍。发球：抛球，到最高点后约 0.12 秒击球。
+ * 在「理想时刻 + 时机误差」挥拍。发球：高抛，球落回到手上方 serve.sweetAboveHand 时击球。
  */
 import { type CpuLevel, cpuLevel } from '@/config/difficulty';
 import type { Tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
 import type { Rng } from '@/core/rng';
 import type { BallState } from '../ball/physics';
-import { GRAVITY, otherSide, type Side, TABLE } from '../constants';
+import { otherSide, type Side, TABLE } from '../constants';
 import { type ContactPlan, planContact } from '../hit/contactZone';
 import { bodyForContact, forehandSign, type PlayerSim, readyPosition } from '../players/PlayerSim';
+import { planToss } from '../players/serveToss';
 import type { ServeSpec } from '../shot/ShotSpec';
 import {
   chooseIntent,
@@ -111,12 +112,10 @@ export class CpuBrain {
     // ---- 发球
     if (t >= this.serveTossAt) {
       this.serveTossAt = Infinity;
-      // 和玩家一样抛得高一些，在球落回到手上方约 25cm 时击球（不打强力发球）。
-      // 按不计阻力的公式算：实际抛得低一点、落得慢一点，算到手上方 35cm 大致就是实际的 25cm
-      const h = this.rng.uniform(0.55, 0.85);
-      const tApex = host.cpuToss(this.side, h);
-      const fall = Math.sqrt((2 * (h - 0.35)) / GRAVITY);
-      this.serveHitAt = t + tApex + fall + this.rng.normal(0, 0.03);
+      // 高抛，和玩家一样在球落回到手上方 serve.sweetAboveHand 时击球（不打强力发球）
+      const sv = host.tune.serve;
+      host.cpuToss(this.side, this.rng.uniform(sv.cpuTossMin, sv.cpuTossMax));
+      this.serveHitAt = planToss(host.ball, t, host.tune).ideal + this.rng.normal(0, 0.03);
     }
     if (t >= this.serveHitAt) {
       this.serveHitAt = NaN;

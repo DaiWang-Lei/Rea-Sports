@@ -3,6 +3,8 @@
  * 2026-10-27 起各级的移动、反应都接近玩家（基本都能追到球），低级别的区别放在回球质量上：
  * 更慢、更居中、偶尔下网出界、偶尔回出高球给你扣杀。以前入门级每秒只跑 2 米、反应 0.3 秒，
  * 对时机误差 45ms 的玩家，约四成回球是「哎呀」高球，一半左右的失分是追不到球漏接，回合碎、像在欺负电脑。
+ * 2026-11-16 起各级回球速度收拢到差不多：NSSR 实机视频里不论对手强弱，「击球 → 落到对方台」都在 0.53–0.62 秒、
+ * 两次击球间隔约 0.9 秒，高等级不靠球快，靠落点、旋转和反应。以前冠军级快到 0.41 秒 / 0.64 秒。
  */
 
 export interface CpuLevel {
@@ -45,8 +47,8 @@ export const CPU_LEVELS: CpuLevel[] = [
     timingSigma: 40,
     aimMargin: 0.3,
     landingSigma: 0.14,
-    speedMin: 0.65,
-    speedMax: 0.85,
+    speedMin: 0.87,
+    speedMax: 1.02,
     spinUse: 0.1,
     curveUse: 0,
     smashP: 0.3,
@@ -65,8 +67,8 @@ export const CPU_LEVELS: CpuLevel[] = [
     timingSigma: 32,
     aimMargin: 0.24,
     landingSigma: 0.12,
-    speedMin: 0.75,
-    speedMax: 0.95,
+    speedMin: 0.85,
+    speedMax: 1.01,
     spinUse: 0.25,
     curveUse: 0.05,
     smashP: 0.55,
@@ -85,8 +87,8 @@ export const CPU_LEVELS: CpuLevel[] = [
     timingSigma: 24,
     aimMargin: 0.16,
     landingSigma: 0.1,
-    speedMin: 0.85,
-    speedMax: 1.1,
+    speedMin: 0.86,
+    speedMax: 1.02,
     spinUse: 0.4,
     curveUse: 0.1,
     smashP: 0.75,
@@ -105,8 +107,8 @@ export const CPU_LEVELS: CpuLevel[] = [
     timingSigma: 17,
     aimMargin: 0.1,
     landingSigma: 0.075,
-    speedMin: 0.95,
-    speedMax: 1.3,
+    speedMin: 0.87,
+    speedMax: 1.03,
     spinUse: 0.55,
     curveUse: 0.15,
     smashP: 0.9,
@@ -125,8 +127,8 @@ export const CPU_LEVELS: CpuLevel[] = [
     timingSigma: 12,
     aimMargin: 0.07,
     landingSigma: 0.055,
-    speedMin: 1.0,
-    speedMax: 1.45,
+    speedMin: 0.88,
+    speedMax: 1.04,
     spinUse: 0.7,
     curveUse: 0.2,
     smashP: 0.97,

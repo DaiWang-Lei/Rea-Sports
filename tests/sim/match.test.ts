@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fromMatchEvents, type RhythmEvent, rhythmSamples, summarize } from '@/rhythm/metrics';
 import { MatchSim, type MatchEvent } from '@/sim/MatchSim';
 
 function playOut(sim: MatchSim, maxTicks = 240 * 60 * 20): MatchEvent[] {
@@ -55,5 +56,38 @@ describe('MatchSim（电脑对电脑）', () => {
     }
     // 重发（擦网）会让同一方多发一次，这里只看去重后的轮换顺序开头
     expect(servers[0]).toBe('near');
+  });
+});
+
+describe('节奏：对照 NSSR 实机视频', () => {
+  /** 同等级电脑对打几局的节奏样本（局与局之间错开时间） */
+  function rhythmOf(level: number, games: number) {
+    const all: RhythmEvent[] = [];
+    for (let g = 0; g < games; g++) {
+      const log = playOut(new MatchSim({ seed: 100 + g, cpu: { near: level, far: level } }));
+      const offset = all.length ? all[all.length - 1].t + 10 : 0;
+      for (const e of fromMatchEvents(log)) all.push({ t: e.t + offset, kind: e.kind });
+    }
+    return rhythmSamples(all);
+  }
+
+  it('各级回球都差不多快：击球 → 落到对方台 0.5–0.65 秒，两次击球约 0.9 秒', () => {
+    // 实机：0.53–0.62 秒 / 0.87–1.0 秒，不论对手强弱
+    for (const level of [1, 3, 5]) {
+      const s = rhythmOf(level, 6);
+      const flight = summarize(s.flight).median;
+      const interval = summarize(s.interval).median;
+      expect(flight, `等级 ${level}`).toBeGreaterThan(0.5);
+      expect(flight, `等级 ${level}`).toBeLessThan(0.65);
+      expect(interval, `等级 ${level}`).toBeGreaterThan(0.82);
+      expect(interval, `等级 ${level}`).toBeLessThan(1.05);
+    }
+  });
+
+  it('电脑高抛发球：从抛起到击球约 0.95 秒', () => {
+    // 实机约 1.15 秒；我们是真实重力，再高最高点就出画了
+    const t = summarize(rhythmOf(3, 2).tossToServe).median;
+    expect(t).toBeGreaterThan(0.9);
+    expect(t).toBeLessThan(1.02);
   });
 });

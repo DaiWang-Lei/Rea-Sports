@@ -61,7 +61,7 @@ function rallyPressure(rallyHits: number): {
   const aggression = clamp((rallyHits - 4) / 12, 0, 1);
   return {
     threat: 0.03 * over,
-    speed: 1 + 0.25 * aggression,
+    speed: 1 + 0.1 * aggression,
     marginScale: 1 - 0.4 * aggression,
     sigmaScale: 1 + 0.35 * aggression,
   };

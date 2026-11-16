@@ -17,8 +17,8 @@ import type { Tuning } from '@/config/tuning';
 import { clamp, lerp } from '@/core/math';
 import type { Rng } from '@/core/rng';
 import { vec3 } from '@/core/vec3';
-import { type BallState, predict } from '../ball/physics';
-import { type Side, sideDir, SIM_DT, TABLE } from '../constants';
+import type { BallState } from '../ball/physics';
+import { type Side, sideDir, TABLE } from '../constants';
 import { type ContactPlan, planContact } from '../hit/contactZone';
 import {
   HitResolver,
@@ -44,6 +44,7 @@ import {
   rightSign,
   type Stroke,
 } from './PlayerSim';
+import { planToss } from './serveToss';
 
 /**
  * 发球的判定窗口：太早的挥拍当准备动作忽略（不算挥空，球落下来还能再挥；界线按每次抛球的高度定，见 toss）；
@@ -207,28 +208,8 @@ export class HumanPlayer {
     const tApex = host.toss(this.side, height);
     if (!(tApex > 0)) return false;
     this.tossFrom = NaN;
-    // 按真实轨迹（带空气阻力）找最高点和理想击球点：球下落经过手上方 serve.sweetAboveHand 的时刻
-    const b = host.ball;
     const sv = host.tune.serve;
-    const sweetZ = b.p.z + sv.sweetAboveHand;
-    const pred = predict(b, now, 2, host.tune.physics);
-    let apex = now + tApex;
-    let topZ = -Infinity;
-    let ideal = NaN;
-    let at = b;
-    for (let i = 0; i < pred.states.length; i++) {
-      const st = pred.states[i];
-      if (st.p.z > topZ) {
-        topZ = st.p.z;
-        apex = now + i * SIM_DT;
-      }
-      if (st.v.z < 0 && st.p.z <= sweetZ) {
-        ideal = now + i * SIM_DT;
-        at = st;
-        break;
-      }
-    }
-    if (!Number.isFinite(ideal)) ideal = apex + 0.3;
+    const { apex, ideal, at } = planToss(host.ball, now, host.tune);
     this.serveAt = { ideal, apex };
     // 早于「最高点前 0.1 秒」的挥拍忽略
     const earliest = (apex - sv.earliestBeforeApex - ideal) / (sv.windowMs / 1000);
