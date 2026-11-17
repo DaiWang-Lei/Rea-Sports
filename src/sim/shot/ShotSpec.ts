@@ -45,6 +45,18 @@ export interface ShotSpec {
   smash?: boolean;
 }
 
+/**
+ * 「哎呀」高球的顶点（台面以上，米）：落台后约弹到台面以上 0.6 米以上，一眼看得出是机会球。
+ * 以前是 0.65–1.0，落台后只比普通球高 6 厘米左右，看不出来，玩家几乎从不扣杀。
+ */
+export const POPUP_APEX = { min: 0.9, max: 1.3 };
+
+/**
+ * 接扣杀时，时机偏差（归一化 τ）超过这么多就仓促回出高球（6 分制约 ±80ms）。
+ * 以前是 0.45（约 ±40ms），玩家几乎接不住扣杀。
+ */
+export const SMASH_RETURN_TAU = 0.9;
+
 export interface BuiltShot {
   v0: Vec3;
   w0: Vec3;

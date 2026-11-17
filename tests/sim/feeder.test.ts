@@ -4,15 +4,23 @@ import { NO_FEATURES } from '@/sim/hit/HitResolver';
 import { FeederSim, type FeedLevel, type ShotReport } from '@/sim/practice/FeederSim';
 import { forehandSign } from '@/sim/players/PlayerSim';
 
-function play(level: FeedLevel, sigmaMs: number | null, feeds: number, seed = 11) {
-  const sim = new FeederSim({ seed, level });
+function play(level: FeedLevel, sigmaMs: number | null, feeds: number, seed = 11, multi = 0) {
+  const sim = new FeederSim({ seed, level, multi });
   const rng = new Rng(seed + 1);
   const reports: ShotReport[] = [];
   let swungFor = -1;
   let id = 1;
-  while (sim.stats.feeds < feeds || sim.phase.kind !== 'wait') {
+  const feedTimes: number[] = [];
+  let overlap = 0;
+  while (reports.length < feeds) {
     sim.tick();
-    for (const e of sim.drainEvents()) if (e.type === 'result') reports.push(e.report);
+    for (const e of sim.drainEvents()) {
+      if (e.type === 'result') reports.push(e.report);
+      if (e.type === 'feed') {
+        feedTimes.push(e.t);
+        if (sim.flyers.length > 0) overlap++;
+      }
+    }
     const plan = sim.plan;
     if (sigmaMs !== null && plan && sim.awaitingSwing && swungFor !== sim.stats.feeds) {
       const tc = plan.t + rng.normal(0, sigmaMs) / 1000;
@@ -35,7 +43,7 @@ function play(level: FeedLevel, sigmaMs: number | null, feeds: number, seed = 11
     }
     if (sim.t > 1000) throw new Error('练习没有正常推进');
   }
-  return { sim, reports };
+  return { sim, reports, feedTimes, overlap };
 }
 
 describe('发球机练习', () => {
@@ -45,6 +53,21 @@ describe('发球机练习', () => {
       expect(reports.length).toBe(50);
       expect(sim.inRate).toBeGreaterThan(0.9);
     }
+  });
+
+  it('多球训练：一击球就送下一球，回出去的球还在飞，每一球都有结果；节奏约是单球的两倍快', () => {
+    const medianGap = (t: number[]) => {
+      const g = t.slice(1).map((x, i) => x - t[i]);
+      return [...g].sort((a, b) => a - b)[g.length >> 1];
+    };
+    const multi = play(1, 15, 30, 11, 1);
+    expect(multi.reports.length).toBe(30);
+    expect(multi.sim.inRate).toBeGreaterThan(0.9);
+    expect(multi.overlap).toBeGreaterThan(20);
+    const single = play(1, 15, 30, 11);
+    expect(single.overlap).toBe(0);
+    expect(medianGap(multi.feedTimes)).toBeLessThan(1.7);
+    expect(medianGap(multi.feedTimes)).toBeLessThan(medianGap(single.feedTimes) * 0.6);
   });
 
   it('不挥拍：每一球都是「没接到」', () => {

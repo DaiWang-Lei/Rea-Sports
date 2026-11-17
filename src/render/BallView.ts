@@ -21,6 +21,24 @@ const TRAIL_STYLE = {
 
 export type TrailStyle = 'normal' | 'wobble' | 'streak';
 
+/** 球的旋转（弧度/秒）：top = 相对飞行方向的上旋分量（负 = 下旋），side = 侧旋（绕竖直轴） */
+export interface BallSpin {
+  top: number;
+  side: number;
+}
+
+/** 从球的速度和角速度算旋转：上旋的转轴是水平的、垂直于飞行方向（ẑ × 飞行方向） */
+export function ballSpin(v: Vec3, w: Vec3): BallSpin {
+  const d = Math.hypot(v.x, v.y);
+  if (d < 1e-6) return { top: 0, side: w.z };
+  return { top: (-w.x * v.y + w.y * v.x) / d, side: w.z };
+}
+
+/** 普通拖尾按旋转上色：上旋橙红、下旋蓝、侧旋（比上 / 下旋还强时）绿；旋转越强颜色越浓 */
+const SPIN_COLOR = { top: 0xff7a3d, back: 0x4da3ff, side: 0x6ee07a };
+/** 旋转多强（弧度/秒）开始上色、多强时颜色最浓：普通回球 40–110，拉球 150–260，搓球 −110 ~ −200 */
+const SPIN_TINT = { from: 50, full: 200 };
+
 export class BallView {
   readonly ball: THREE.Mesh;
   private readonly shadow: THREE.Mesh;
@@ -29,6 +47,7 @@ export class BallView {
   private readonly trailGeo: THREE.BufferGeometry;
   private readonly history: Array<{ p: Vec3; t: number }> = [];
   style: TrailStyle = 'normal';
+  spin: BallSpin = { top: 0, side: 0 };
 
   constructor(root: THREE.Object3D) {
     this.ball = new THREE.Mesh(
@@ -113,6 +132,18 @@ export class BallView {
     const col = this.trailGeo.getAttribute('color') as THREE.BufferAttribute;
     const n = this.history.length;
     const c = new THREE.Color(st.color);
+    let alpha = st.alpha;
+    if (this.style === 'normal') {
+      const side = Math.abs(this.spin.side) > Math.abs(this.spin.top);
+      const amount = side ? Math.abs(this.spin.side) : Math.abs(this.spin.top);
+      const k = Math.min(
+        1,
+        Math.max(0, (amount - SPIN_TINT.from) / (SPIN_TINT.full - SPIN_TINT.from))
+      );
+      const tint = side ? SPIN_COLOR.side : this.spin.top > 0 ? SPIN_COLOR.top : SPIN_COLOR.back;
+      c.lerp(new THREE.Color(tint), k);
+      alpha += 0.35 * k;
+    }
     const pts = this.history.map((e) => {
       if (this.style !== 'wobble') return new THREE.Vector3(e.p.x, e.p.y, e.p.z);
       const phase = (t - e.t) * 8 * Math.PI * 2;
@@ -142,7 +173,7 @@ export class BallView {
           pts[i].y + r * (Math.cos(a) * u.y + Math.sin(a) * v.y),
           pts[i].z + r * (Math.cos(a) * u.z + Math.sin(a) * v.z)
         );
-        col.setXYZW(k, c.r, c.g, c.b, st.alpha * f * f);
+        col.setXYZW(k, c.r, c.g, c.b, alpha * f * f);
       }
     }
     pos.needsUpdate = true;

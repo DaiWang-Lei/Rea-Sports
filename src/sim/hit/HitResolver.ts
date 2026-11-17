@@ -21,7 +21,7 @@ import type { Rng } from '@/core/rng';
 import type { Vec3 } from '@/core/vec3';
 import { type Side, sideDir, TABLE } from '../constants';
 import { rightSign, type Stroke } from '../players/PlayerSim';
-import type { ShotKind, ShotSpec } from '../shot/ShotSpec';
+import { POPUP_APEX, SMASH_RETURN_TAU, type ShotKind, type ShotSpec } from '../shot/ShotSpec';
 import type { ContactPlan } from './contactZone';
 
 /** 挥拍特征（玩家自己的坐标系：x 右、y 朝对手、z 上；左手玩家已镜像为右手） */
@@ -325,7 +325,8 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
   const s = (ctx.stroke === 'fh' ? 1 : -1) * ctx.handed;
   const xSelf = (ctx.contact.x * rs) / TABLE.halfWidth;
 
-  const rushed = ctx.reachError > m.reachNormal || (ctx.smashIn && Math.abs(ctx.tau) > 0.45);
+  const rushed =
+    ctx.reachError > m.reachNormal || (ctx.smashIn && Math.abs(ctx.tau) > SMASH_RETURN_TAU);
   if (rushed) {
     const u = clamp(s * aim * ctx.tau * 0.6 + 0.2 * xSelf, -1.1, 1.1);
     return {
@@ -339,7 +340,7 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
         topspin: rng.uniform(-30, 30),
         sidespin: rng.uniform(-30, 30),
         clearance: 0.05,
-        apex: rng.uniform(0.65, 1.0),
+        apex: rng.uniform(POPUP_APEX.min, POPUP_APEX.max),
         oops: true,
       },
     };

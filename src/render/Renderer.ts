@@ -9,7 +9,7 @@ import { forehandSign, type PlayerSim } from '@/sim/players/PlayerSim';
 import { buildArena } from './Arena';
 import { type AvatarLook, AvatarView } from './AvatarView';
 import { BallMachineView } from './BallMachineView';
-import { BallView, type TrailStyle } from './BallView';
+import { type BallSpin, BallView, type TrailStyle } from './BallView';
 import { Effects } from './Effects';
 import type { PaddlePose } from './paddlePose';
 import { buildScenery, type Scenery, SKY } from './Scenery';
@@ -44,10 +44,14 @@ export interface RenderFrame {
   ball: Vec3;
   ballVisible: boolean;
   trail: TrailStyle;
+  /** 球的旋转（拖尾按它上色） */
+  spin: BallSpin;
   /** 远端没有人（发球机练习）时可以不给 far */
   players: { near: RenderPlayer; far?: RenderPlayer };
   /** 发球机出球口位置；给了就画发球机、不画远端人物 */
   machine?: Vec3;
+  /** 多球训练时回出去、还在飞的球 */
+  extraBalls?: Vec3[];
   /** 震屏：剩余强度（米） */
   shake: number;
 }
@@ -58,6 +62,8 @@ export class Renderer {
   readonly camera = new THREE.PerspectiveCamera(CAMERA.fov, 16 / 9, 0.05, 60);
   readonly root = new THREE.Group();
   readonly ballView: BallView;
+  /** 多余的球（多球训练），按需创建 */
+  private readonly extraBallViews: BallView[] = [];
   readonly avatars: Record<Side, AvatarView>;
   readonly machine: BallMachineView;
   private readonly scenery: Scenery;
@@ -116,14 +122,22 @@ export class Renderer {
     this.lastT = frame.t;
 
     this.ballView.style = frame.trail;
+    this.ballView.spin = frame.spin;
     this.ballView.update(frame.ball, frame.t, frame.ballVisible);
 
     for (const side of ['near', 'far'] as const) {
       const rp = frame.players[side];
       this.avatars[side].group.visible = !!rp;
-      if (rp) this.avatars[side].update(rp.body, sideDir(side), forehandSign(rp.player), rp.paddle);
+      if (rp)
+        this.avatars[side].update(rp.body, sideDir(side), forehandSign(rp.player), rp.paddle, dt);
     }
     this.machine.update(frame.machine ?? null);
+    const extras = frame.extraBalls ?? [];
+    while (this.extraBallViews.length < extras.length)
+      this.extraBallViews.push(new BallView(this.root));
+    this.extraBallViews.forEach((v, i) =>
+      v.update(extras[i] ?? frame.ball, frame.t, i < extras.length)
+    );
     this.scenery.update(frame.t);
     this.effects.update(frame.t);
     // 球靠近自己时，自己再透明一些

@@ -20,6 +20,7 @@ import {
   type WhiffReason,
 } from '@/sim/practice/FeederSim';
 import { SHOT_KIND_TEXT } from '@/sim/shot/ShotSpec';
+import { ballSpin } from '@/render/BallView';
 import { Renderer } from '@/render/Renderer';
 import { Hud } from '@/ui/Hud';
 import { MotionInput, type SwingEventOut } from '../input/MotionInput';
@@ -43,18 +44,21 @@ interface Settings {
   level: FeedLevel;
   zone: FeedZone;
   leniency: number;
+  /** 多球训练：0 = 单球，1 = 多球（一击球就送下一球） */
+  multi: number;
 }
 
 const SETTINGS_KEY = 'rea-practice';
 
 function loadSettings(): Settings {
-  const def: Settings = { level: 1, zone: 'mixed', leniency: 0.6 };
+  const def: Settings = { level: 1, zone: 'mixed', leniency: 0.6, multi: 0 };
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
     return {
       level: s?.level ?? def.level,
       zone: s?.zone ?? def.zone,
       leniency: s?.leniency ?? def.leniency,
+      multi: s?.multi ?? def.multi,
     };
   } catch {
     return def;
@@ -245,6 +249,7 @@ export class PracticeApp {
       level: s.level,
       zone: s.zone,
       leniency: s.leniency,
+      multi: s.multi,
       handed: this.input?.handed ?? 1,
       tune: tuning,
     });
@@ -309,8 +314,10 @@ export class PracticeApp {
       ball,
       ballVisible: s.ballFree || s.phase.kind === 'wait',
       trail: 'normal',
+      spin: ballSpin(s.ball.v, s.ball.w),
       players: { near: { player: s.player, body, paddle: this.nearPaddle(t, body) } },
       machine: s.machine,
+      extraBalls: s.flyers.map((f) => f.ball.p),
       shake: 0,
     });
   }
@@ -424,6 +431,7 @@ export class PracticeApp {
     return {
       level: s.level,
       zone: s.zone,
+      multi: s.multi,
       leniency: s.leniency,
       latencyMs: this.latencyMs,
       screen: screenKey(),
@@ -578,7 +586,7 @@ export class PracticeApp {
     const inN = st.results.in ?? 0;
     const med = this.sim.medianTiming();
     this.statsEl.innerHTML = `
-      <div class="pr-title">发球机练习 · ${LEVEL_TEXT[this.settings.level]} · ${ZONE_TEXT[this.settings.zone]}</div>
+      <div class="pr-title">发球机练习 · ${LEVEL_TEXT[this.settings.level]} · ${ZONE_TEXT[this.settings.zone]}${this.settings.multi ? ' · 多球' : ''}</div>
       <div>回进 <b>${inN}</b> / ${total}${total ? `（${Math.round((inN / total) * 100)}%）` : ''} · 连续 <b>${st.streak}</b>（最佳 ${st.bestStreak}）</div>
       ${med === null ? '' : `<div class="dim">最近的时机中位数：${med === 0 ? '正好' : `${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms`}</div>`}`;
   }
@@ -624,6 +632,7 @@ export class PracticeApp {
         <h2>暂停</h2>
         <div class="pr-setting"><span>难度</span>${([1, 2, 3] as FeedLevel[]).map((l) => opt('level', l, s.level, LEVEL_TEXT[l])).join('')}</div>
         <div class="pr-setting"><span>落点</span>${(['mixed', 'fh', 'bh'] as FeedZone[]).map((z) => opt('zone', z, s.zone, ZONE_TEXT[z])).join('')}</div>
+        <div class="pr-setting"><span>送球</span>${opt('multi', 0, s.multi, '单球')}${opt('multi', 1, s.multi, '多球')}<span class="dim">多球：一击球就送下一球</span></div>
         <div class="pr-setting"><span>宽容度</span>${[0.2, 0.6, 1].map((v) => opt('leniency', v, s.leniency, v < 0.4 ? '严格' : v < 0.8 ? '标准' : '宽松')).join('')}</div>
         <div class="pr-setting"><span>画面延迟补偿<small class="dim">（这块屏幕 ${screenKey()}）</small></span>
           <button data-lat="-10">−10</button><b class="pr-lat">${this.latencyMs} ms</b><button data-lat="10">+10</button>

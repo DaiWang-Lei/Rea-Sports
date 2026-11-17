@@ -573,7 +573,15 @@ export class MatchApp {
           g.hits++;
           g.timings.push(e.human.timingMs);
           const stroke = e.human.stroke === 'fh' ? '正手' : '反手';
-          this.showTiming(`${stroke} · ${timingText(e.human.timingMs)}`);
+          const spin =
+            e.kind === 'curve'
+              ? ' · 侧旋'
+              : e.human.spin >= 0.3
+                ? ' · 上旋'
+                : e.human.spin <= -0.3
+                  ? ' · 下旋'
+                  : '';
+          this.showTiming(`${stroke}${spin} · ${timingText(e.human.timingMs)}`);
         }
         break;
       case 'whiff':

@@ -9,7 +9,13 @@ import type { Rng } from '@/core/rng';
 import { type Side, sideDir, TABLE } from '../constants';
 import type { ContactPlan } from '../hit/contactZone';
 import { rightSign, type Stroke } from '../players/PlayerSim';
-import type { ServeSpec, ShotKind, ShotSpec } from '../shot/ShotSpec';
+import {
+  POPUP_APEX,
+  type ServeSpec,
+  SMASH_RETURN_TAU,
+  type ShotKind,
+  type ShotSpec,
+} from '../shot/ShotSpec';
 
 export interface ShotIntent {
   kind: ShotKind;
@@ -39,7 +45,7 @@ const BASE_SPEED: Record<ShotKind, number> = {
   drive: 6.8,
   cut: 4.4,
   curve: 5.4,
-  smash: 13,
+  smash: 10,
   popup: 4.0,
   serve: 6.0,
 };
@@ -188,7 +194,9 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
   const threat = incomingThreat(info.contact, info.smash) + pressure.threat;
   const pRush = clamp(1.5 * (threat - lv.composure), 0, 0.6);
   const rushed =
-    reachError > m.reachNormal || rng.chance(pRush) || (info.smash && Math.abs(tau) > 0.45);
+    reachError > m.reachNormal ||
+    rng.chance(pRush) ||
+    (info.smash && Math.abs(tau) > SMASH_RETURN_TAU);
 
   // 时机 → 左右：早打斜线（以击球者自己的左右为准，左手镜像）
   const sEff = (info.stance === 'fh' ? 1 : -1) * info.handed;
@@ -207,7 +215,7 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
         topspin: rng.uniform(-30, 30),
         sidespin: rng.uniform(-30, 30),
         clearance: 0.05,
-        apex: rng.uniform(0.65, 1.0),
+        apex: rng.uniform(POPUP_APEX.min, POPUP_APEX.max),
         oops: true,
       },
     };
@@ -223,7 +231,7 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
           x: clamp(intent.target.x + dxWorld, -1, 1),
           y: dir * rng.uniform(0.75, 1.15),
         },
-        speedH: (BASE_SPEED.smash + rng.uniform(0, 3)) * pace,
+        speedH: (BASE_SPEED.smash + rng.uniform(0, 2)) * pace,
         topspin: 80,
         sidespin: 0,
         clearance: 0.02,

@@ -8,7 +8,7 @@ import type { MatchEvent, MatchSim } from '@/sim/MatchSim';
 import { REASON_TEXT } from '@/sim/rally/Referee';
 import { cpuPaddle, type PaddlePose } from '@/render/paddlePose';
 import { type RenderFrame, Renderer } from '@/render/Renderer';
-import type { TrailStyle } from '@/render/BallView';
+import { ballSpin, type TrailStyle } from '@/render/BallView';
 import { Hud, type HudNames } from '@/ui/Hud';
 import { SIM_DT } from '@/sim/constants';
 
@@ -126,6 +126,7 @@ export class GameView {
       },
       ballVisible: s.phase.kind !== 'gameOver',
       trail: this.trail,
+      spin: ballSpin(s.ball.v, s.ball.w),
       players: {
         near: {
           player: s.players.near,

@@ -32,6 +32,8 @@ export interface PracticeSettingsLog {
   level: number;
   /** 练习：落点区域；比赛：'match' */
   zone: string;
+  /** 练习：多球训练（0 = 单球） */
+  multi?: number;
   /** 比赛：6 / 11 分制 */
   points?: number;
   leniency: number;

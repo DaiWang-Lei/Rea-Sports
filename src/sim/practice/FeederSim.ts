@@ -6,7 +6,7 @@ import { createTuning, type Tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
 import { Rng } from '@/core/rng';
 import { isFiniteVec, type Vec3, vec3 } from '@/core/vec3';
-import { ballState, type BallEvent, type BallState, stepBall } from '../ball/physics';
+import { ballState, type BallEvent, type BallState, cloneBall, stepBall } from '../ball/physics';
 import { SIM_DT, TABLE } from '../constants';
 import { type ContactPlan, planContact } from '../hit/contactZone';
 import {
@@ -45,7 +45,25 @@ export interface FeederOptions {
   leniency?: number;
   /** 两球之间的间隔（秒） */
   interval?: number;
+  /**
+   * 多球训练：两次送球最少隔这么多秒（0 = 单球，一球打完出了结果再送下一球）。
+   * 回出去的球继续飞、单独判结果，发球机不等它；同一时间只有一个来球，所以实际节奏约是「送球到击球」+ 0.3 秒
+   */
+  multi?: number;
 }
+
+/** 多球训练时回出去、还在飞的球 */
+interface Flyer {
+  ball: BallState;
+  info: HitInfo;
+  netTouched: boolean;
+  lastEventT: number;
+}
+
+type HitInfo = Omit<ShotReport, 'result' | 'landing'>;
+
+/** 多球训练：击球后至少隔这么久再送下一球（秒） */
+const MULTI_GAP = 0.3;
 
 export type FeedResult =
   'in' | 'out' | 'net' | 'own' | 'missed' | 'early' | 'late' | 'reach' | 'volley';
@@ -146,6 +164,7 @@ export class FeederSim {
   zone: FeedZone;
   leniency: number;
   interval: number;
+  multi: number;
 
   t = 0;
   ball: BallState = ballState();
@@ -158,10 +177,13 @@ export class FeederSim {
   readonly stats: FeederStats = { feeds: 0, results: {}, timings: [], streak: 0, bestStreak: 0 };
   /** 最近一球的报告 */
   last: ShotReport | null = null;
+  /** 多球训练时回出去、还在飞的球 */
+  readonly flyers: Flyer[] = [];
+  private lastFeedT = -Infinity;
   /** 本球的状态 */
   private feedSpin: FeedSpin = 'flat';
   private feedPopup = false;
-  private hitInfo: Omit<ShotReport, 'result' | 'landing'> | null = null;
+  private hitInfo: HitInfo | null = null;
   private lastEventT = 0;
   private readonly ballEvents: BallEvent[] = [];
   private bouncedNear = false;
@@ -184,6 +206,7 @@ export class FeederSim {
     this.zone = opts.zone ?? 'mixed';
     this.leniency = opts.leniency ?? 0.5;
     this.interval = opts.interval ?? 1.4;
+    this.multi = opts.multi ?? 0;
     this.windowOverride = opts.windowMs;
     this.paceOverride = opts.pace;
     this.player = createPlayer(
@@ -279,6 +302,7 @@ export class FeederSim {
       this.phase = { kind: 'paused' };
       this.resolver.end();
       this.parkBall();
+      this.flyers.length = 0;
     } else if (this.phase.kind === 'paused') {
       this.phase = { kind: 'wait', until: this.t + 0.8 };
     }
@@ -314,7 +338,49 @@ export class FeederSim {
         this.onDead();
       }
     }
+    this.stepFlyers(dt);
     this.t += dt;
+  }
+
+  /** 多球训练：回出去的球各自飞，落台 / 落地 / 飞远了就出结果 */
+  private stepFlyers(dt: number): void {
+    for (let i = this.flyers.length - 1; i >= 0; i--) {
+      const f = this.flyers[i];
+      this.ballEvents.length = 0;
+      stepBall(f.ball, dt, this.t, this.tune.physics, this.rng, this.ballEvents);
+      let result: (Partial<ShotReport> & { result: FeedResult }) | null = null;
+      for (const e of this.ballEvents) {
+        f.lastEventT = e.t;
+        this.emitBallEvent(e);
+        if (e.type === 'table')
+          result = e.side === 'far' ? { result: 'in', landing: { ...e.p } } : { result: 'own' };
+        else if (e.type === 'floor' || e.type === 'side')
+          result = { result: f.netTouched ? 'net' : 'out' };
+        else if (e.type === 'net' && e.part === 'body') f.netTouched = true;
+        if (result) break;
+      }
+      const p = f.ball.p;
+      if (
+        !result &&
+        (this.t - f.lastEventT > 3 ||
+          Math.abs(p.y) > 6 ||
+          Math.abs(p.x) > 5 ||
+          p.z < -0.3 ||
+          !isFiniteVec(p))
+      )
+        result = { result: f.netTouched ? 'net' : 'out' };
+      if (result) {
+        this.record(result, f.info);
+        this.flyers.splice(i, 1);
+      }
+    }
+  }
+
+  /** 下一球什么时候送：单球时等结果出来再隔 interval；多球按节奏，但击球后至少隔 MULTI_GAP */
+  private nextFeedAt(): number {
+    return this.multi > 0
+      ? Math.max(this.lastFeedT + this.multi, this.t + MULTI_GAP)
+      : this.t + this.interval;
   }
 
   private parkBall(): void {
@@ -414,6 +480,7 @@ export class FeederSim {
     this.lastEventT = this.t;
     this.player.swing = null;
     this.stats.feeds++;
+    this.lastFeedT = this.t;
     this.events.push({ type: 'feed', t: this.t, spin, speed });
     this.ballStance = null;
     this.stanceRefX = this.player.mover.x;
@@ -508,15 +575,34 @@ export class FeederSim {
       spin: mapped.spin,
       reach: reachError,
     });
-    this.phase = { kind: 'outgoing', since: this.t };
     this.plan = null;
     this.resolver.end();
+    if (this.multi > 0) {
+      // 多球：回出去的球交给 flyers 单独判结果，发球机按节奏送下一球
+      this.flyers.push({
+        ball: cloneBall(this.ball),
+        info: this.hitInfo,
+        netTouched: false,
+        lastEventT: this.t,
+      });
+      this.hitInfo = null;
+      this.parkBall();
+      this.phase = { kind: 'wait', until: this.nextFeedAt() };
+      return;
+    }
+    this.phase = { kind: 'outgoing', since: this.t };
   }
 
   // ---------------------------------------------------------------- 球的事件 → 结果
 
   private onBallEvent(e: BallEvent): void {
     this.lastEventT = e.t;
+    this.emitBallEvent(e);
+    this.judge(e);
+  }
+
+  /** 球的碰撞 → 声音、特效用的事件 */
+  private emitBallEvent(e: BallEvent): void {
     switch (e.type) {
       case 'table':
         this.events.push({
@@ -538,6 +624,10 @@ export class FeederSim {
         this.events.push({ type: 'sideHit', t: e.t, impact: e.impact, p: e.p });
         break;
     }
+  }
+
+  /** 来球 / 回球的结果判定 */
+  private judge(e: BallEvent): void {
     const ph = this.phase.kind;
     if (ph === 'incoming') {
       if (e.type === 'table' && e.side === 'near') {
@@ -582,8 +672,19 @@ export class FeederSim {
     }
   }
 
+  /** 这一球（当前的球）出结果，然后等下一球 */
   private finish(r: Partial<ShotReport> & { result: FeedResult }): void {
-    const info = this.hitInfo;
+    this.record(r, this.hitInfo ?? { feedSpin: this.feedSpin });
+    this.resolver.end();
+    this.plan = null;
+    this.netTouched = false;
+    this.pendingWhiff = null;
+    this.phase = { kind: 'wait', until: this.nextFeedAt() };
+    // 让球自然落下（不立刻收回），下一球出球时再重置
+  }
+
+  /** 记一球的结果：统计、连续回进、结果事件 */
+  private record(r: Partial<ShotReport> & { result: FeedResult }, info: Partial<HitInfo>): void {
     const report: ShotReport = {
       result: r.result,
       timingMs: r.timingMs ?? info?.timingMs ?? null,
@@ -594,7 +695,7 @@ export class FeederSim {
       rushed: info?.rushed ?? false,
       smash: info?.smash ?? false,
       landing: r.landing ?? null,
-      feedSpin: this.feedSpin,
+      feedSpin: info.feedSpin ?? this.feedSpin,
     };
     this.last = report;
     const st = this.stats;
@@ -606,12 +707,6 @@ export class FeederSim {
       st.streak = 0;
     }
     this.events.push({ type: 'result', t: this.t, report });
-    this.resolver.end();
-    this.plan = null;
-    this.netTouched = false;
-    this.pendingWhiff = null;
-    this.phase = { kind: 'wait', until: this.t + this.interval };
-    // 让球自然落下（不立刻收回），下一球出球时再重置
   }
 
   drainEvents(): FeederEvent[] {

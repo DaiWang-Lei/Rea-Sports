@@ -32,6 +32,8 @@ const GHOST_DEPTH_ORDER = 9;
 const GHOST_ORDER = 10;
 /** 迈一步的距离（米） */
 const STRIDE = 0.4;
+/** 跑动时身体最多倾斜多少（弧度，约 10°） */
+const LEAN_MAX = 0.18;
 
 /** 把沿 Y 轴、长 1 的圆柱摆到 a → b */
 function segment(m: THREE.Object3D, a: Vec3, b: Vec3): void {
@@ -90,7 +92,9 @@ export class AvatarView {
   private readonly baseOpacity: number;
   private last: { x: number; y: number } | null = null;
   private stride = 0;
-  private stepAmp = 0;
+  private clock = 0;
+  /** 平滑后的移动速度（身体局部坐标，米/秒） */
+  private readonly vel = { x: 0, y: 0 };
   private readonly stepAxis = new THREE.Vector3(1, 0, 0);
 
   constructor(root: THREE.Object3D, look: AvatarLook, translucent: boolean) {
@@ -282,11 +286,12 @@ export class AvatarView {
     body: { x: number; y: number },
     facing: 1 | -1,
     shoulderSide: number,
-    paddle: PaddlePose
+    paddle: PaddlePose,
+    dt: number
   ): void {
     this.bodyGroup.position.set(body.x, body.y, 0);
-    this.bodyGroup.rotation.z = facing > 0 ? 0 : Math.PI;
-    this.walk(body, facing);
+    this.move(body, facing, dt);
+    this.bodyGroup.updateMatrix();
 
     // 球拍
     const n = new THREE.Vector3(paddle.normal.x, paddle.normal.y, paddle.normal.z).normalize();
@@ -300,8 +305,8 @@ export class AvatarView {
     this.paddle.quaternion.setFromRotationMatrix(m);
     this.paddle.position.set(paddle.pos.x, paddle.pos.y, paddle.pos.z);
 
-    // 持拍手：肩 → 肘 → 握拍处（拍柄末端往拍面方向一点）
-    const s = shoulderOf(body, facing, shoulderSide);
+    // 持拍手：肩（跟着身体的倾斜、起伏走）→ 肘 → 握拍处（拍柄末端往拍面方向一点）
+    const s = this.shoulder(body, facing, shoulderSide);
     const g = {
       x: paddle.pos.x + h.x * GRIP_TO_CENTER,
       y: paddle.pos.y + h.y * GRIP_TO_CENTER,
@@ -310,10 +315,22 @@ export class AvatarView {
     this.pose(this.paddleArm, s, elbowOf(s, g, facing, shoulderSide), g);
 
     // 另一只手：上臂垂在身侧略向前，前臂朝前抬到腰前（准备姿势）
-    const s2 = shoulderOf(body, facing, -shoulderSide);
+    const s2 = this.shoulder(body, facing, -shoulderSide);
     const e2 = add(s2, unit(-shoulderSide * 0.2, facing * 0.25, -1), UPPER_ARM);
     const g2 = add(e2, unit(shoulderSide * 0.35, facing * 0.9, 0.25), FOREARM * 0.85);
     this.pose(this.freeArm, s2, e2, g2);
+  }
+
+  /** 肩膀：站直时的位置（shoulderOf）随身体一起倾斜、起伏 */
+  private shoulder(body: { x: number; y: number }, facing: 1 | -1, out: number): Vec3 {
+    const w = shoulderOf(body, facing, out);
+    // 换到身体局部坐标（远端身体转了 180°），再用身体当前的变换放回去
+    const local = new THREE.Vector3(
+      facing * (w.x - body.x),
+      facing * (w.y - body.y),
+      w.z
+    ).applyMatrix4(this.bodyGroup.matrix);
+    return { x: local.x, y: local.y, z: local.z };
   }
 
   private pose(a: Arm, s: Vec3, e: Vec3, g: Vec3): void {
@@ -324,30 +341,52 @@ export class AvatarView {
     a.hand.position.set(g.x, g.y, g.z);
   }
 
-  /** 按走过的距离迈步：两腿绕髋交替摆（转轴垂直于移动方向），身体随步子轻轻起伏 */
-  private walk(body: { x: number; y: number }, facing: 1 | -1): void {
+  /**
+   * 跑动：腿下面看不到（远端被球台挡住、自己在画面下沿外），所以主要靠上半身——
+   * 身体往移动方向倾斜（最多约 10°），每一步一个小跳（侧滑步），两腿绕髋交替摆；等球时脚下轻轻颠。
+   */
+  private move(body: { x: number; y: number }, facing: 1 | -1, dt: number): void {
     const last = this.last;
     this.last = { x: body.x, y: body.y };
-    if (!last) return;
-    const dx = body.x - last.x;
-    const dy = body.y - last.y;
-    const d = Math.hypot(dx, dy);
-    // 瞬移（换发球、新的一分）不算走路
-    if (d > 0.3) return;
-    this.stride += (d / STRIDE) * Math.PI;
-    // 每帧挪 1.5cm 以上（约 0.9 m/s）算全速
-    this.stepAmp += (Math.min(1, d / 0.015) - this.stepAmp) * 0.15;
-    if (d > 1e-4) {
-      // 换到身体局部坐标（远端身体转了 180°）
-      const lx = facing > 0 ? dx : -dx;
-      const ly = facing > 0 ? dy : -dy;
-      this.stepAxis.set(-ly / d, lx / d, 0);
+    this.clock += dt;
+    let vx = 0;
+    let vy = 0;
+    if (last && dt > 0) {
+      const dx = body.x - last.x;
+      const dy = body.y - last.y;
+      const d = Math.hypot(dx, dy);
+      // 瞬移（换发球、新的一分）不算跑动
+      if (d < 0.3) {
+        this.stride += (d / STRIDE) * Math.PI;
+        // 换到身体局部坐标（远端身体转了 180°）
+        vx = (facing * dx) / dt;
+        vy = (facing * dy) / dt;
+        if (d > 1e-4) this.stepAxis.set(-vy, vx, 0).normalize();
+      }
     }
+    const k = 1 - Math.exp(-dt / 0.12);
+    this.vel.x += (vx - this.vel.x) * k;
+    this.vel.y += (vy - this.vel.y) * k;
+    const speed = Math.hypot(this.vel.x, this.vel.y);
+    // 约 1.2 m/s 算全速跑
+    const amp = Math.min(1, speed / 1.2);
     this.hips.forEach((hip, i) => {
-      const a = this.stepAmp * 0.45 * Math.sin(this.stride + i * Math.PI);
-      hip.quaternion.setFromAxisAngle(this.stepAxis, a);
+      hip.quaternion.setFromAxisAngle(
+        this.stepAxis,
+        amp * 0.5 * Math.sin(this.stride + i * Math.PI)
+      );
     });
-    this.bodyGroup.position.z = this.stepAmp * 0.025 * Math.abs(Math.sin(this.stride));
+    const lean = (v: number) => Math.max(-LEAN_MAX, Math.min(LEAN_MAX, 0.07 * v));
+    // 先转朝向，再在身体局部坐标里倾斜：往右跑向右倒（绕 y），往前跑向前倒（绕 x）
+    this.bodyGroup.rotation.set(
+      -lean(this.vel.y),
+      lean(this.vel.x),
+      facing > 0 ? 0 : Math.PI,
+      'ZXY'
+    );
+    const hop = 0.05 * amp * Math.abs(Math.sin(this.stride));
+    const idle = 0.012 * (1 - amp) * (0.5 + 0.5 * Math.sin(this.clock * Math.PI * 2 * 1.6));
+    this.bodyGroup.position.z = hop + idle;
   }
 
   get paddlePosition(): Vec3 {

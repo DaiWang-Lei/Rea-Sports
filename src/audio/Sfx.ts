@@ -1,11 +1,40 @@
 /**
  * 程序化音效（不用任何素材）：击球「啵」、台面「哒」、网、地面、观众。
+ * 乒乓球的声音是一下极短的宽频「咔」（球壳撞击，1–2ms），加上拍子 / 台面几个很快衰减的共振（300–2500Hz，
+ * 衰减 5–25ms），没有拖长的音调。按真实录音（维基共享资源公有领域的「Ping pong.ogg」）的频谱和衰减定的参数：
+ * 共振峰集中在 300–1500Hz，大多 10–50ms 内衰减 20dB。
  * 浏览器要求用户点击后才能出声：第一次交互时调用 unlock()。
  */
 import { clamp } from '@/core/math';
 
+/** 一个共振：频率（Hz）、衰减时间常数（秒）、相对幅度 */
+interface Mode {
+  f: number;
+  tau: number;
+  a: number;
+}
+
+/** 拍子（木板 + 胶皮）：胶皮吸收高频，「咔」偏软 */
+const PADDLE_MODES: Mode[] = [
+  { f: 550, tau: 0.014, a: 1 },
+  { f: 1150, tau: 0.009, a: 0.6 },
+  { f: 2300, tau: 0.005, a: 0.35 },
+];
+/** 台面（大块木板）：低一点、衰减稍长，「咔」更脆 */
+const TABLE_MODES: Mode[] = [
+  { f: 380, tau: 0.025, a: 0.7 },
+  { f: 900, tau: 0.014, a: 1 },
+  { f: 1700, tau: 0.007, a: 0.45 },
+];
+const NET_MODES: Mode[] = [{ f: 250, tau: 0.02, a: 1 }];
+const FLOOR_MODES: Mode[] = [
+  { f: 220, tau: 0.03, a: 1 },
+  { f: 700, tau: 0.012, a: 0.5 },
+];
+
 export class Sfx {
-  private ctx: AudioContext | null = null;
+  private ctx: BaseAudioContext | null = null;
+  private offline = false;
   private master: GainNode | null = null;
   private reverb: ConvolverNode | null = null;
   private reverbGain: GainNode | null = null;
@@ -13,23 +42,28 @@ export class Sfx {
   enabled = true;
 
   unlock(): void {
-    if (!this.ctx) {
-      this.ctx = new AudioContext({ latencyHint: 'interactive' });
-      this.master = this.ctx.createGain();
-      this.master.gain.value = 0.9;
-      this.master.connect(this.ctx.destination);
-      this.noise = this.makeNoise(1);
-      this.reverb = this.ctx.createConvolver();
-      this.reverb.buffer = this.makeImpulse(1.6);
-      this.reverbGain = this.ctx.createGain();
-      this.reverbGain.gain.value = 0;
-      this.reverb.connect(this.reverbGain).connect(this.master);
-    }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    if (!this.ctx) this.attach(new AudioContext({ latencyHint: 'interactive' }));
+    const ctx = this.ctx as AudioContext;
+    if (!this.offline && ctx.state === 'suspended') void ctx.resume();
+  }
+
+  /** 接到一个音频上下文（游戏里是 AudioContext；也可以是 OfflineAudioContext，用来离线渲染检查音色） */
+  attach(ctx: BaseAudioContext): void {
+    this.ctx = ctx;
+    this.offline = typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
+    this.master = ctx.createGain();
+    this.master.gain.value = 0.9;
+    this.master.connect(ctx.destination);
+    this.noise = this.makeNoise(1);
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = this.makeImpulse(1.6);
+    this.reverbGain = ctx.createGain();
+    this.reverbGain.gain.value = 0;
+    this.reverb.connect(this.reverbGain).connect(this.master);
   }
 
   get ready(): boolean {
-    return !!this.ctx && this.ctx.state === 'running' && this.enabled;
+    return !!this.ctx && this.enabled && (this.offline || this.ctx.state === 'running');
   }
 
   /** 回声湿声比例（长回合时加回声） */
@@ -41,14 +75,14 @@ export class Sfx {
   /** 击球：力度 q ∈ [0,1]；pan ∈ [−1,1] */
   hit(q: number, pan: number, smash = false): void {
     if (!this.ready) return;
-    const ctx = this.ctx!;
-    const t = ctx.currentTime;
+    const t = this.ctx!.currentTime;
     const out = this.panner(pan);
-    const gain = 0.6 + 0.4 * clamp(q, 0, 1);
-    const jitter = 1 + (Math.random() - 0.5) * 0.06;
-    this.noiseBurst(t, 1800 * (1 + 0.25 * q) * jitter, 3, 0.015, gain * 0.9, out);
-    this.tone(t, 820 * (1 + 0.15 * q) * jitter, 0.035, gain * 0.6, out);
-    if (smash) this.tone(t, 180, 0.08, 0.7, out);
+    const k = clamp(q, 0, 1);
+    const gain = 0.55 + 0.45 * k;
+    // 用力越大「咔」越亮
+    this.click(t, 1500, 4500 + 3000 * k, 0.0015, gain * 5, out);
+    this.modes(t, PADDLE_MODES, gain * 0.55, out);
+    if (smash) this.modes(t, [{ f: 180, tau: 0.03, a: 1 }], 0.6, out);
   }
 
   table(impact: number, pan: number): void {
@@ -56,22 +90,26 @@ export class Sfx {
     const t = this.ctx!.currentTime;
     const out = this.panner(pan);
     const g = clamp(impact / 4, 0.15, 1);
-    this.noiseBurst(t, 3200, 4, 0.01, g * 0.7, out);
-    this.tone(t, 1350, 0.02, g * 0.45, out);
+    this.click(t, 2000, 12000, 0.0012, g * 7, out);
+    this.modes(t, TABLE_MODES, g * 0.5, out);
   }
 
   net(impact: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
-    this.noiseBurst(t, 700, 1.2, 0.05, clamp(impact / 5, 0.2, 0.8), this.panner(0), 'lowpass');
+    const out = this.panner(0);
+    const g = clamp(impact / 5, 0.2, 0.8);
+    this.click(t, 200, 900, 0.006, g * 0.6, out);
+    this.modes(t, NET_MODES, g * 0.4, out);
   }
 
   floor(impact: number, pan: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
+    const out = this.panner(pan);
     const g = clamp(impact / 4, 0.05, 0.5);
-    this.noiseBurst(t, 1500, 2, 0.02, g, this.panner(pan));
-    this.tone(t, 600, 0.03, g * 0.5, this.panner(pan));
+    this.click(t, 800, 6000, 0.0012, g * 2.5, out);
+    this.modes(t, FLOOR_MODES, g * 0.5, out);
   }
 
   /** 观众：一声欢呼（得分）或跟拍的「嘿」 */
@@ -99,7 +137,15 @@ export class Sfx {
   /** 提示音（菜单、计时） */
   beep(freq = 880, dur = 0.12, gain = 0.3): void {
     if (!this.ready) return;
-    this.tone(this.ctx!.currentTime, freq, dur, gain, this.master!);
+    const t = this.ctx!.currentTime;
+    const osc = this.ctx!.createOscillator();
+    osc.frequency.value = freq;
+    const g = this.ctx!.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g).connect(this.master!);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
   }
 
   // ---------------------------------------------------------------- 内部
@@ -113,40 +159,39 @@ export class Sfx {
     return p;
   }
 
-  private noiseBurst(
-    t: number,
-    freq: number,
-    q: number,
-    decay: number,
-    gain: number,
-    out: AudioNode,
-    type: BiquadFilterType = 'bandpass'
-  ): void {
+  /** 撞击的「咔」：一小段带通噪声，按时间常数 tau 指数衰减 */
+  private click(t: number, lo: number, hi: number, tau: number, gain: number, out: AudioNode) {
     const ctx = this.ctx!;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
-    const f = ctx.createBiquadFilter();
-    f.type = type;
-    f.frequency.value = freq;
-    f.Q.value = q;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = lo;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = hi;
     const g = ctx.createGain();
     g.gain.setValueAtTime(gain, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + decay * 5);
-    src.connect(f).connect(g).connect(out);
+    g.gain.setTargetAtTime(0, t, tau);
+    src.connect(hp).connect(lp).connect(g).connect(out);
     src.start(t, Math.random() * 0.5);
-    src.stop(t + decay * 5 + 0.02);
+    src.stop(t + tau * 10 + 0.005);
   }
 
-  private tone(t: number, freq: number, decay: number, gain: number, out: AudioNode): void {
+  /** 共振：每个模态一个正弦，频率随机偏 ±3%（每一下都不完全一样），按各自的时间常数衰减 */
+  private modes(t: number, modes: Mode[], gain: number, out: AudioNode): void {
     const ctx = this.ctx!;
-    const osc = ctx.createOscillator();
-    osc.frequency.value = freq;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(gain, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + decay * 5);
-    osc.connect(g).connect(out);
-    osc.start(t);
-    osc.stop(t + decay * 5 + 0.02);
+    const detune = 1 + (Math.random() - 0.5) * 0.06;
+    for (const m of modes) {
+      const osc = ctx.createOscillator();
+      osc.frequency.value = m.f * detune;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(gain * m.a, t);
+      g.gain.setTargetAtTime(0, t, m.tau);
+      osc.connect(g).connect(out);
+      osc.start(t);
+      osc.stop(t + m.tau * 10 + 0.005);
+    }
   }
 
   private makeNoise(seconds: number): AudioBuffer {
