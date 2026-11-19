@@ -7,6 +7,9 @@
  *  - 球还没在本方台面弹起、且就在弹起前 100ms 内挥中 → 未落台击球（犯规）；
  *  - τ ∈ [τmin, τmax] 击中；偏早 / 偏晚 → 挥空；
  *  - 同一个动作里，后来的、更快的反向挥拍可以取代还没执行的击球（引拍被误认成挥拍时）；
+ *    慢挥拍（gentle）判中后最多再等 gentleHold 秒（不超过窗口最晚时刻）才执行，期间任何一下快挥拍都能取代它：
+ *    实测（2026-11-17 三局比赛录制）慢挥拍被执行 7 次，6 次后面紧跟着更强的反向快挥（是引拍）。
+ *    以前只等 50ms、还要求同一个动作，晚 40–100ms 的真正击球来不及取代，打出了相反的正反手；
  *  - 挥早 / 未落台先挂起 holdEarly 秒再算数：期间来一下反方向、更快的挥拍，就把前面那下当引拍丢掉。
  *    引拍挥得快（≥ 快速确认阈值）时，它比真正的击球早 0.3–0.45 秒，人一打晚就正好落进「挥早」区间。
  * 击中后在 max(T_ideal, 确认时刻) 执行，球在理想击球点被打出（与 WSR 一样不需要真的把拍子对准球）。
@@ -97,7 +100,7 @@ export interface ResolverConfig {
   tauMax: number;
   /** 比这个更早的动作忽略 */
   tauIgnore: number;
-  /** 慢挥拍确认后最少再等多久执行（给更快的前向挥拍留出取代的机会），秒 */
+  /** 慢挥拍确认后再等多久执行（给更快的前向挥拍留出取代的机会；不超过窗口最晚时刻），秒 */
   gentleHold: number;
   /** 同一动作内允许取代的最长间隔，秒 */
   supersedeWithin: number;
@@ -113,7 +116,7 @@ export function resolverConfig(tune: Tuning, windowMs: number): ResolverConfig {
     tauMin: tune.timing.tauMin,
     tauMax: tune.timing.tauMax,
     tauIgnore: -3.5,
-    gentleHold: 0.05,
+    gentleHold: 0.15,
     supersedeWithin: 0.3,
     bounceGrace: 0.02,
     holdEarly: 0.45,
@@ -176,11 +179,12 @@ export class HitResolver {
       this.held = null;
     }
 
-    // 取代还没执行的击球（同一动作里的更快反向挥拍）
+    // 取代还没执行的击球：同一动作里的更快反向挥拍；慢挥拍等待期间来的任何快挥拍（引拍和前挥之间可能停顿）
     const p = this.pending;
     if (p) {
       const sameMotion =
-        p.swing.motion === sw.motion && sw.tDetect - p.swing.tDetect <= c.supersedeWithin;
+        (p.swing.motion === sw.motion || p.swing.path === 'gentle') &&
+        sw.tDetect - p.swing.tDetect <= c.supersedeWithin;
       const better =
         p.swing.path === 'gentle'
           ? sw.path === 'fast'
@@ -207,7 +211,11 @@ export class HitResolver {
       this.attempted = true;
       return { type: 'whiff', reason: 'late', tau, stroke };
     }
-    const execAt = Math.max(plan.t, sw.tDetect + (sw.path === 'gentle' ? c.gentleHold : 0));
+    const latest = plan.t + c.tauMax * c.window;
+    const execAt = Math.max(
+      plan.t,
+      sw.path === 'gentle' ? Math.min(sw.tDetect + c.gentleHold, latest) : sw.tDetect
+    );
     this.pending = { swing: sw, stroke, tau, execAt };
     return { type: 'hit', tau, stroke, execAt };
   }
@@ -291,8 +299,12 @@ export function swingPower(wPeak: number): number {
 }
 
 /**
- * 上下旋程度 σ（−1..1，正 = 上旋）：拍面俯仰（以平时的角度为基准）为主，翻腕、刷球方向为辅；
- * |σ| < 0.15 算不转。宽容度越大，俯仰的死区越宽
+ * 上下旋程度 σ（−1..1，正 = 上旋）：和 WSR 一样以挥拍轨迹为主——往上刷是上旋、往下切是下旋；
+ * 拍面俯仰（以你平时的角度为基准）、挥拍中拍面的翻转为辅。|σ| < 0.15 算不转。宽容度越大，俯仰的死区越宽。
+ * 刷球方向不依赖校准，是最可靠的信号：往上 8° 以内算平，30° 拉满。
+ * 2026-11-19 按三局比赛录制改：以前拍面占 0.7、刷球只占 0.25（35° 拉满），而拍面是相对「平时的角度」算的，
+ * 你每板都同样压拍拉球，平时的角度也就是压拍，相对值约等于 0——正手刷球中位 29°（九成在 15° 以上），
+ * 却只有 18% 判成拉球、三分之一判成平击
  */
 export function spinSigma(ft: SwingFeatures, leniency: number): number {
   const f = clamp(leniency, 0, 1);
@@ -302,10 +314,17 @@ export function spinSigma(ft: SwingFeatures, leniency: number): number {
     ? 0
     : -Math.sign(beta) * clamp((Math.abs(beta) - thr) / (24 * DEG), 0, 1);
   const sigmaTwist = Number.isNaN(ft.pitchChange) ? 0 : clamp(-ft.pitchChange / (25 * DEG), -1, 1);
-  const sigmaBrush = Number.isNaN(ft.brush) ? 0 : clamp(ft.brush / (35 * DEG), -1, 1);
-  const sigma = clamp(0.7 * sigmaFace + 0.3 * sigmaTwist + 0.25 * sigmaBrush, -1, 1);
+  const b = ft.brush;
+  const sigmaBrush = Number.isNaN(b)
+    ? 0
+    : Math.sign(b) * clamp((Math.abs(b) - BRUSH_FLAT) / (BRUSH_FULL - BRUSH_FLAT), 0, 1);
+  const sigma = clamp(0.6 * sigmaBrush + 0.35 * sigmaFace + 0.2 * sigmaTwist, -1, 1);
   return Math.abs(sigma) < 0.15 ? 0 : sigma;
 }
+
+/** 刷球角度：这么多以内算平挥，到这么多算拉满（弧度） */
+const BRUSH_FLAT = 8 * DEG;
+const BRUSH_FULL = 30 * DEG;
 
 /** 侧旋程度（−1..1）：绕前进方向的转动；s = +1 正手、−1 反手（以击球者自己的左右为准） */
 export function sideSpinAmount(ft: SwingFeatures, s: number): number {

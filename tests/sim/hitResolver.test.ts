@@ -148,6 +148,25 @@ describe('击球判定', () => {
     expect(r.pending?.stroke).toBe('fh');
   });
 
+  it('慢挥拍判中后等一会儿：晚 60ms 才来的快挥拍（另一个动作）照样取代它；没人取代就在窗口结束前执行', () => {
+    // 理想击球时刻 1.12（见 plan()），窗口 90ms、最晚 τ = 1.8 → 1.282
+    const r = resolver();
+    const a = r.onSwing(
+      swing({ id: 1, motion: 1, path: 'gentle', dir: -1, wPeak: 8, tContact: 1.0, tDetect: 1.06 })
+    );
+    expect(a.type === 'hit' && a.execAt).toBeCloseTo(1.21);
+    expect(r.due(1.15)).toBeNull();
+    const b = r.onSwing(
+      swing({ id: 2, motion: 2, path: 'fast', dir: 1, wPeak: 24, tContact: 1.17, tDetect: 1.18 })
+    );
+    expect(b.type).toBe('hit');
+    expect(r.due(1.19)?.stroke).toBe('fh');
+
+    const r2 = resolver();
+    r2.onSwing(swing({ id: 1, path: 'gentle', dir: -1, wPeak: 8, tContact: 1.2, tDetect: 1.22 }));
+    expect(r2.pending?.execAt).toBeCloseTo(1.12 + 1.8 * 0.09);
+  });
+
   it('方向不明（上下挥）时按站位', () => {
     const r = resolver();
     r.stance = 'bh';
@@ -198,13 +217,31 @@ describe('击球映射', () => {
     expect(fast).toBeLessThan(slow * 1.6);
   });
 
-  it('拍面前压 → 上旋；后仰 → 下旋', () => {
+  it('拍面前压 → 上旋；后仰 → 下旋（拍面是辅助，单靠拍面转得不多）', () => {
     const rng = new Rng(2);
     const top = mapSwing(ctx({ features: { ...NO_FEATURES, facePitch: -30 * DEG } }), rng, tune);
     const back = mapSwing(ctx({ features: { ...NO_FEATURES, facePitch: 35 * DEG } }), rng, tune);
-    expect(top.spec.topspin).toBeGreaterThan(100);
+    expect(top.spec.topspin).toBeGreaterThan(60);
+    expect(top.spec.kind).toBe('normal');
     expect(back.spec.topspin).toBeLessThan(0);
     expect(back.spec.kind).toBe('cut');
+  });
+
+  it('挥拍轨迹定旋转（像 WSR）：往上刷 30° 是拉球，水平挥是平击，往下切是下旋', () => {
+    const rng = new Rng(5);
+    const at = (brush: number) =>
+      mapSwing(
+        ctx({ features: { ...NO_FEATURES, facePitch: 0, pitchChange: 0, brush } }),
+        rng,
+        tune
+      );
+    const loop = at(30 * DEG);
+    expect(loop.spec.kind).toBe('drive');
+    expect(loop.spec.topspin).toBeGreaterThan(140);
+    expect(at(5 * DEG).spin).toBe(0);
+    const chop = at(-30 * DEG);
+    expect(chop.spec.kind).toBe('cut');
+    expect(chop.spec.topspin).toBeLessThan(-100);
   });
 
   it('向上刷球增加上旋（不需要校准）', () => {
