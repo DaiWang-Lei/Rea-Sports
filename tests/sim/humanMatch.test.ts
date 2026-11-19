@@ -106,8 +106,10 @@ describe('比赛：人对电脑', () => {
     }
   });
 
-  it('人发球：先落本方台再过网落对方台（不会发球失误）', () => {
-    for (const off of [-350, -200, -60, 0, 40, 70]) {
+  it('人发球：先落本方台再过网落对方台（不会发球失误），抛高 0.75 米（按键 / 轻抖）到 1.2 米（用力抖）都一样', () => {
+    for (const [height, off] of [0.75, 1.2].flatMap((h) =>
+      [-350, -200, -60, 0, 40, 70].map((o) => [h, o] as const)
+    )) {
       const sim = new MatchSim({ seed: 9, cpu: { far: 3 } });
       const log: MatchEvent[] = [];
       let swung = false;
@@ -115,7 +117,7 @@ describe('比赛：人对电脑', () => {
       while (sim.t < 20 && !log.some((e) => e.type === 'point')) {
         sim.tick();
         log.push(...sim.drainEvents());
-        if (h.canToss(sim)) sim.humanToss('near', sim.tune.serve.buttonTossHeight);
+        if (h.canToss(sim)) sim.humanToss('near', height);
         const sa = h.serveAt;
         if (sa && !swung && sim.t >= sa.ideal + off / 1000 - 0.07) {
           swung = true;

@@ -48,10 +48,11 @@ describe('向上抖手柄抛球', () => {
     expect(soft[0].t).toBeLessThan(600);
   });
 
-  it('高度在 0.45–1.0 米之间（按键抛 0.75 米）', () => {
-    expect(tossHeight(1.3)).toBeCloseTo(0.45);
-    expect(tossHeight(2.3)).toBeCloseTo(0.6);
-    expect(tossHeight(20)).toBeCloseTo(1.0);
+  it('平时轻轻一抖（1.3–1.6G）就和按键一样抛 0.75 米左右，用力抖更高，最高 1.2 米', () => {
+    expect(tossHeight(1.3)).toBeCloseTo(0.75);
+    expect(tossHeight(1.6)).toBeCloseTo(0.825);
+    expect(tossHeight(2.8)).toBeCloseTo(1.125);
+    expect(tossHeight(20)).toBeCloseTo(1.2);
   });
 
   it('只超过阈值 1–2 个样本（一下磕碰）不触发', () => {
