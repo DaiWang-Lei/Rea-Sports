@@ -172,9 +172,8 @@ export class GameView {
           this.hud.flash('扣杀!', '', 0.9, 'big');
           this.shakeUntil = this.sim.t + 0.12;
         }
-        // 长回合：观众跟拍喊，再长就安静下来、球声带回声
-        if (e.rallyHits >= 8 && e.rallyHits < 20)
-          this.sfx.crowd('chant', Math.min(1, (e.rallyHits - 6) / 8));
+        // 长回合：第 8 拍观众「哦——」一声，再长就安静下来、球声带回声
+        if (e.rallyHits === 8) this.sfx.crowd('ooh');
         this.sfx.setEcho(e.rallyHits >= 20 ? 0.45 : 0);
         break;
       }

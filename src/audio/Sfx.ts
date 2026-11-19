@@ -1,36 +1,51 @@
 /**
- * 程序化音效（不用任何素材）：击球「啵」、台面「哒」、网、地面、观众。
- * 乒乓球的声音是一下极短的宽频「咔」（球壳撞击，1–2ms），加上拍子 / 台面几个很快衰减的共振（300–2500Hz，
- * 衰减 5–25ms），没有拖长的音调。按真实录音（维基共享资源公有领域的「Ping pong.ogg」）的频谱和衰减定的参数：
- * 共振峰集中在 300–1500Hz，大多 10–50ms 内衰减 20dB。
- * 浏览器要求用户点击后才能出声：第一次交互时调用 unlock()。
+ * 音效：真实录音（Freesound 上的 CC0 素材，来源见 NOTICE），切成单下撞击后随机挑着放。
+ * 以前是程序合成的，听着像电子音，合成怎么调都不像，所以换成录音。
+ *  - 击球、落台、落地：每种几下不同的录音（拼在一个 WAV 里，每格 SLOT 秒，撞击在每格开头 1ms 处，不会比画面晚），
+ *    随机挑一下（不连着重复同一下），音高随机偏 ±3%，力度控制音量；
+ *  - 球网：落台的录音放慢、滤掉高频，闷一点；
+ *  - 观众：得分欢呼、长回合得分的大欢呼、回合打长了的一声「哦——」。
+ * 浏览器要求用户点击后才能出声：第一次交互时调用 unlock()。素材在创建时就开始下载，解锁后解码。
  */
 import { clamp } from '@/core/math';
+import cheerBigUrl from './samples/cheer-big.mp3?url';
+import cheerUrl from './samples/cheer.mp3?url';
+import floorUrl from './samples/floor.wav?url';
+import oohUrl from './samples/ooh.mp3?url';
+import paddleUrl from './samples/paddle.wav?url';
+import tableUrl from './samples/table.wav?url';
 
-/** 一个共振：频率（Hz）、衰减时间常数（秒）、相对幅度 */
-interface Mode {
-  f: number;
-  tau: number;
-  a: number;
+/** 撞击素材每格的长度（秒） */
+const SLOT = 0.1;
+
+const FILES = {
+  paddle: paddleUrl,
+  table: tableUrl,
+  floor: floorUrl,
+  cheer: cheerUrl,
+  cheerBig: cheerBigUrl,
+  ooh: oohUrl,
+};
+type SampleName = keyof typeof FILES;
+
+/** 撞击素材里有几下 */
+const SLOTS: Partial<Record<SampleName, number>> = { paddle: 6, table: 6, floor: 3 };
+
+/** 原始文件只下载一次（多个页面实例共用），每个音频上下文各自解码 */
+let raw: Promise<Partial<Record<SampleName, ArrayBuffer>>> | null = null;
+function fetchSamples(): Promise<Partial<Record<SampleName, ArrayBuffer>>> {
+  raw ??= Promise.all(
+    (Object.entries(FILES) as Array<[SampleName, string]>).map(async ([name, url]) => {
+      try {
+        const res = await fetch(url);
+        return [name, res.ok ? await res.arrayBuffer() : null] as const;
+      } catch {
+        return [name, null] as const;
+      }
+    })
+  ).then((list) => Object.fromEntries(list.filter(([, b]) => b)));
+  return raw;
 }
-
-/** 拍子（木板 + 胶皮）：胶皮吸收高频，「咔」偏软 */
-const PADDLE_MODES: Mode[] = [
-  { f: 550, tau: 0.014, a: 1 },
-  { f: 1150, tau: 0.009, a: 0.6 },
-  { f: 2300, tau: 0.005, a: 0.35 },
-];
-/** 台面（大块木板）：低一点、衰减稍长，「咔」更脆 */
-const TABLE_MODES: Mode[] = [
-  { f: 380, tau: 0.025, a: 0.7 },
-  { f: 900, tau: 0.014, a: 1 },
-  { f: 1700, tau: 0.007, a: 0.45 },
-];
-const NET_MODES: Mode[] = [{ f: 250, tau: 0.02, a: 1 }];
-const FLOOR_MODES: Mode[] = [
-  { f: 220, tau: 0.03, a: 1 },
-  { f: 700, tau: 0.012, a: 0.5 },
-];
 
 export class Sfx {
   private ctx: BaseAudioContext | null = null;
@@ -38,8 +53,14 @@ export class Sfx {
   private master: GainNode | null = null;
   private reverb: ConvolverNode | null = null;
   private reverbGain: GainNode | null = null;
-  private noise: AudioBuffer | null = null;
+  private buffers: Partial<Record<SampleName, AudioBuffer>> = {};
+  private decoding: Promise<void> = Promise.resolve();
+  private readonly lastSlot: Partial<Record<SampleName, number>> = {};
   enabled = true;
+
+  constructor() {
+    if (typeof fetch !== 'undefined') void fetchSamples();
+  }
 
   unlock(): void {
     if (!this.ctx) this.attach(new AudioContext({ latencyHint: 'interactive' }));
@@ -47,19 +68,24 @@ export class Sfx {
     if (!this.offline && ctx.state === 'suspended') void ctx.resume();
   }
 
-  /** 接到一个音频上下文（游戏里是 AudioContext；也可以是 OfflineAudioContext，用来离线渲染检查音色） */
+  /** 接到一个音频上下文（游戏里是 AudioContext；也可以是 OfflineAudioContext，用来离线渲染检查） */
   attach(ctx: BaseAudioContext): void {
     this.ctx = ctx;
     this.offline = typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.9;
+    this.master.gain.value = 1.4;
     this.master.connect(ctx.destination);
-    this.noise = this.makeNoise(1);
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = this.makeImpulse(1.6);
     this.reverbGain = ctx.createGain();
     this.reverbGain.gain.value = 0;
     this.reverb.connect(this.reverbGain).connect(this.master);
+    this.decoding = this.decode(ctx);
+  }
+
+  /** 素材解码完（离线渲染时先等它） */
+  loaded(): Promise<void> {
+    return this.decoding;
   }
 
   get ready(): boolean {
@@ -72,66 +98,38 @@ export class Sfx {
       this.reverbGain.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.3);
   }
 
-  /** 击球：力度 q ∈ [0,1]；pan ∈ [−1,1] */
+  /** 击球：力度 q ∈ [0,1]；pan ∈ [−1,1]；扣杀 / 强力发球更响、音调稍低更「实」 */
   hit(q: number, pan: number, smash = false): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
-    const out = this.panner(pan);
-    const k = clamp(q, 0, 1);
-    const gain = 0.55 + 0.45 * k;
-    // 用力越大「咔」越亮
-    this.click(t, 1500, 4500 + 3000 * k, 0.0015, gain * 5, out);
-    this.modes(t, PADDLE_MODES, gain * 0.55, out);
-    if (smash) this.modes(t, [{ f: 180, tau: 0.03, a: 1 }], 0.6, out);
+    const gain = smash ? 1 : 0.35 + 0.6 * clamp(q, 0, 1);
+    this.play('paddle', gain, smash ? 0.94 : 1, this.panner(pan));
   }
 
   table(impact: number, pan: number): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
-    const out = this.panner(pan);
-    const g = clamp(impact / 4, 0.15, 1);
-    this.click(t, 2000, 12000, 0.0012, g * 7, out);
-    this.modes(t, TABLE_MODES, g * 0.5, out);
+    this.play('table', 0.85 * clamp(impact / 4, 0.15, 1), 1, this.panner(pan));
   }
 
   net(impact: number): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
-    const out = this.panner(0);
-    const g = clamp(impact / 5, 0.2, 0.8);
-    this.click(t, 200, 900, 0.006, g * 0.6, out);
-    this.modes(t, NET_MODES, g * 0.4, out);
+    const lp = this.ctx!.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1400;
+    lp.connect(this.panner(0));
+    this.play('table', 0.7 * clamp(impact / 5, 0.2, 0.8), 0.6, lp);
   }
 
   floor(impact: number, pan: number): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
-    const out = this.panner(pan);
-    const g = clamp(impact / 4, 0.05, 0.5);
-    this.click(t, 800, 6000, 0.0012, g * 2.5, out);
-    this.modes(t, FLOOR_MODES, g * 0.5, out);
+    this.play('floor', 0.7 * clamp(impact / 4, 0.1, 1), 1, this.panner(pan));
   }
 
-  /** 观众：一声欢呼（得分）或跟拍的「嘿」 */
-  crowd(kind: 'cheer' | 'chant', amount = 1): void {
+  /** 观众：得分欢呼（amount ≥ 1 是长回合 / 赢下比赛的大欢呼），或回合打长了的一声「哦——」 */
+  crowd(kind: 'cheer' | 'ooh', amount = 1): void {
     if (!this.ready) return;
-    const ctx = this.ctx!;
-    const t = ctx.currentTime;
-    const dur = kind === 'cheer' ? 1.4 : 0.22;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = kind === 'cheer' ? 900 : 450;
-    bp.Q.value = 0.8;
-    const g = ctx.createGain();
-    const peak = (kind === 'cheer' ? 0.35 : 0.25) * amount;
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(peak, t + (kind === 'cheer' ? 0.15 : 0.03));
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(bp).connect(g).connect(this.master!);
-    src.start(t);
-    src.stop(t + dur + 0.05);
+    if (kind === 'ooh') this.play('ooh', 0.4, 1, this.master!);
+    else if (amount >= 1) this.play('cheerBig', 0.45, 1, this.master!);
+    else this.play('cheer', 0.4 * amount + 0.1, 1, this.master!);
   }
 
   /** 提示音（菜单、计时） */
@@ -150,6 +148,44 @@ export class Sfx {
 
   // ---------------------------------------------------------------- 内部
 
+  private async decode(ctx: BaseAudioContext): Promise<void> {
+    const files = await fetchSamples();
+    await Promise.all(
+      (Object.entries(files) as Array<[SampleName, ArrayBuffer]>).map(async ([name, data]) => {
+        try {
+          // decodeAudioData 会把传进去的 ArrayBuffer 用掉，给它一份拷贝
+          this.buffers[name] = await ctx.decodeAudioData(data.slice(0));
+        } catch {
+          // 解不开就不出这种声音
+        }
+      })
+    );
+  }
+
+  /** 放一段素材；撞击类随机挑一格（不连着重复同一格），音高随机偏 ±3% */
+  private play(name: SampleName, gain: number, rate: number, out: AudioNode): void {
+    const buf = this.buffers[name];
+    if (!buf) return;
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(out);
+    const slots = SLOTS[name];
+    const t = ctx.currentTime;
+    if (slots) {
+      src.playbackRate.value = rate * (1 + (Math.random() - 0.5) * 0.06);
+      let i = Math.floor(Math.random() * slots);
+      if (slots > 1 && i === this.lastSlot[name]) i = (i + 1) % slots;
+      this.lastSlot[name] = i;
+      src.start(t, i * SLOT, SLOT);
+    } else {
+      src.playbackRate.value = rate;
+      src.start(t);
+    }
+  }
+
   private panner(pan: number): AudioNode {
     const ctx = this.ctx!;
     const p = ctx.createStereoPanner();
@@ -157,49 +193,6 @@ export class Sfx {
     p.connect(this.master!);
     p.connect(this.reverb!);
     return p;
-  }
-
-  /** 撞击的「咔」：一小段带通噪声，按时间常数 tau 指数衰减 */
-  private click(t: number, lo: number, hi: number, tau: number, gain: number, out: AudioNode) {
-    const ctx = this.ctx!;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = lo;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = hi;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(gain, t);
-    g.gain.setTargetAtTime(0, t, tau);
-    src.connect(hp).connect(lp).connect(g).connect(out);
-    src.start(t, Math.random() * 0.5);
-    src.stop(t + tau * 10 + 0.005);
-  }
-
-  /** 共振：每个模态一个正弦，频率随机偏 ±3%（每一下都不完全一样），按各自的时间常数衰减 */
-  private modes(t: number, modes: Mode[], gain: number, out: AudioNode): void {
-    const ctx = this.ctx!;
-    const detune = 1 + (Math.random() - 0.5) * 0.06;
-    for (const m of modes) {
-      const osc = ctx.createOscillator();
-      osc.frequency.value = m.f * detune;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(gain * m.a, t);
-      g.gain.setTargetAtTime(0, t, m.tau);
-      osc.connect(g).connect(out);
-      osc.start(t);
-      osc.stop(t + m.tau * 10 + 0.005);
-    }
-  }
-
-  private makeNoise(seconds: number): AudioBuffer {
-    const ctx = this.ctx!;
-    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    return buf;
   }
 
   private makeImpulse(seconds: number): AudioBuffer {
