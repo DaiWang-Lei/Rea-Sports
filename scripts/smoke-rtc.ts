@@ -6,6 +6,7 @@
  * 用法：pnpm smoke:rtc [BASE 网址]，默认 https://localhost:5288；也可以测线上：pnpm smoke:rtc https://xxx.github.io/Rea-Sports
  */
 import { chromium } from 'playwright-core';
+import { CHROME_ARGS } from './chromeArgs';
 
 const BASE = (process.argv[2] ?? process.env.BASE ?? 'https://localhost:5288').replace(/\/$/, '');
 const room = `smoke${Math.random().toString(36).slice(2, 8)}`;
@@ -15,7 +16,7 @@ const browser = await chromium.launch({
   executablePath:
     process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: true,
-  args: ['--ignore-certificate-errors', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+  args: CHROME_ARGS,
 });
 const errors: string[] = [];
 const watch = (tag: string, page: import('playwright-core').Page) => {

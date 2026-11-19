@@ -6,6 +6,7 @@
  * 用法：pnpm smoke:phone [截图路径]
  */
 import { chromium } from 'playwright-core';
+import { CHROME_ARGS } from './chromeArgs';
 import WebSocket from 'ws';
 import { fromAxisAngle, multiply, quat, rotateInverse } from '../src/core/quat';
 import { vec3 } from '../src/core/vec3';
@@ -18,7 +19,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch({
   executablePath: CHROME,
   headless: true,
-  args: ['--ignore-certificate-errors', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+  args: CHROME_ARGS,
 });
 const page = await browser.newPage({
   viewport: { width: 1280, height: 1600 },

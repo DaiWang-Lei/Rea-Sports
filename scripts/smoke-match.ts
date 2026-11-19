@@ -5,6 +5,7 @@
  * 用法：pnpm smoke:match [BASE 网址] [截图路径]
  */
 import { chromium } from 'playwright-core';
+import { CHROME_ARGS } from './chromeArgs';
 
 const BASE = (process.argv[2] ?? process.env.BASE ?? 'https://localhost:5288').replace(/\/$/, '');
 const shot = process.argv[3] ?? 'smoke-match.png';
@@ -14,7 +15,7 @@ const browser = await chromium.launch({
   executablePath:
     process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: true,
-  args: ['--ignore-certificate-errors', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+  args: CHROME_ARGS,
 });
 const page = await browser.newPage({
   viewport: { width: 1280, height: 720 },
