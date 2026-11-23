@@ -7,13 +7,14 @@ import type { Vec3 } from '@/core/vec3';
 import { sideDir, type Side, TABLE } from '@/sim/constants';
 import { forehandSign, type PlayerSim } from '@/sim/players/PlayerSim';
 import { buildArena } from './Arena';
-import { avatarsInUse, createAvatarBody } from './avatar/roster';
+import { avatarsInUse, createAvatarBody, crowdKit } from './avatar/roster';
 import { AvatarView } from './AvatarView';
 import { BallMachineView } from './BallMachineView';
 import { type BallSpin, BallView, type TrailStyle } from './BallView';
+import { Crowd } from './Crowd';
 import { Effects, type ServeCue } from './Effects';
 import type { PaddlePose } from './paddlePose';
-import { buildScenery, type Scenery, SKY } from './Scenery';
+import { buildScenery, SKY } from './Scenery';
 
 /** 相机：近端身后偏上，俯视整张球台（WSR 视角）。调试面板可改。 */
 export const CAMERA = { y: -4.1, z: 2.75, lookY: 0.3, lookZ: -0.05, fov: 40 };
@@ -64,7 +65,8 @@ export class Renderer {
   private readonly extraBallViews: BallView[] = [];
   readonly avatars: Record<Side, AvatarView>;
   readonly machine: BallMachineView;
-  private readonly scenery: Scenery;
+  /** 看台上的观众 */
+  readonly crowd: Crowd;
   private readonly effects: Effects;
   private camX = 0;
   private lastT = 0;
@@ -83,7 +85,8 @@ export class Renderer {
     this.scene.fog = new THREE.Fog(SKY, 25, 60);
     this.root.quaternion.copy(SIM_TO_THREE);
     this.scene.add(this.root);
-    this.scenery = buildScenery(this.root, this.renderer.capabilities.getMaxAnisotropy());
+    const scenery = buildScenery(this.root, this.renderer.capabilities.getMaxAnisotropy());
+    this.crowd = new Crowd(this.root, scenery.seats, crowdKit());
     buildArena(this.root);
     this.ballView = new BallView(this.root);
     // 近端的自己半透明（随时看得到球）
@@ -151,7 +154,7 @@ export class Renderer {
     this.extraBallViews.forEach((v, i) =>
       v.update(extras[i] ?? frame.ball, frame.t, i < extras.length)
     );
-    this.scenery.update(frame.t);
+    this.crowd.update(frame.t);
     this.effects.update(frame.t);
     this.effects.serveCue(frame.serveCue ?? null, frame.t);
     // 球靠近自己时，自己再透明一些

@@ -4,30 +4,29 @@
  * 镜头往下俯视，画面顶边的视线约 32 米外就落到地面，所以看不到天空：画面顶部露出的是围挡和前两排观众。
  */
 import * as THREE from 'three';
+import type { Seat } from './Crowd';
 
 export const SKY = 0xbfe3ff;
 
 /** 围挡半径（米）：远端球员身后约 3.5 米 */
 const WALL_R = 6;
 const WALL_H = 0.85;
-/** 看台各排：内外半径、高度 */
+/**
+ * 看台各排：内外半径、高度。观众站着，台阶不高：画面顶边在远端看台处只露得出离地 1.6～1.8 米以下的东西，
+ * 台阶高了后排的头就被切掉
+ */
 const TIERS = [
-  { rIn: 7.0, rOut: 7.8, h: 0.45 },
-  { rIn: 7.8, rOut: 8.6, h: 0.9 },
-  { rIn: 8.6, rOut: 9.4, h: 1.35 },
+  { rIn: 7.0, rOut: 7.8, h: 0.1 },
+  { rIn: 7.8, rOut: 8.6, h: 0.25 },
+  { rIn: 8.6, rOut: 9.4, h: 0.4 },
 ];
 /** 看台覆盖的角度（从 +x 逆时针）：远端一侧加上左右两边 */
 const STAND_A0 = (-25 * Math.PI) / 180;
 const STAND_A1 = (205 * Math.PI) / 180;
 
-const SHIRTS = [
-  0xe63946, 0xf4a261, 0xe9c46a, 0x2a9d8f, 0x457b9d, 0xffffff, 0x8ecae6, 0xff8fab, 0x6a4c93,
-];
-const SKINS = [0xf1c9a5, 0xe0ac7e, 0xc68642, 0x8d5524, 0xffdbac];
-
 export interface Scenery {
-  /** 观众轻轻晃动 */
-  update(t: number): void;
+  /** 看台上观众站的位置 */
+  seats: Seat[];
 }
 
 function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) {
@@ -153,50 +152,17 @@ export function buildScenery(root: THREE.Object3D, anisotropy: number): Scenery 
     )
   );
 
-  // 观众：每排坐在靠前的位置，约 0.6 米一个，三成多空位
-  const seats: Array<{ x: number; y: number; z: number; phase: number; rate: number }> = [];
+  // 观众的位置：每排靠前站一排，约 0.6 米一个，三成多空位（人物见 Crowd）
+  const seats: Seat[] = [];
   for (const tr of TIERS) {
     const r = tr.rIn + 0.3;
     const step = 0.6 / r;
     for (let a = STAND_A0 + step / 2; a < STAND_A1; a += step) {
       if (Math.random() < 0.35) continue;
       const jitter = (Math.random() - 0.5) * 0.15;
-      seats.push({
-        x: (r + jitter) * Math.cos(a),
-        y: (r + jitter) * Math.sin(a),
-        z: tr.h,
-        phase: Math.random() * Math.PI * 2,
-        rate: 0.6 + Math.random() * 0.8,
-      });
+      seats.push({ x: (r + jitter) * Math.cos(a), y: (r + jitter) * Math.sin(a), z: tr.h });
     }
   }
-  const bodies = new THREE.InstancedMesh(
-    new THREE.CapsuleGeometry(0.16, 0.26, 4, 10).rotateX(Math.PI / 2),
-    new THREE.MeshStandardMaterial({ roughness: 0.8 }),
-    seats.length
-  );
-  const heads = new THREE.InstancedMesh(
-    new THREE.SphereGeometry(0.12, 14, 10),
-    new THREE.MeshStandardMaterial({ roughness: 0.7 }),
-    seats.length
-  );
-  const color = new THREE.Color();
-  for (let i = 0; i < seats.length; i++) {
-    bodies.setColorAt(i, color.setHex(SHIRTS[Math.floor(Math.random() * SHIRTS.length)]));
-    heads.setColorAt(i, color.setHex(SKINS[Math.floor(Math.random() * SKINS.length)]));
-  }
-  root.add(bodies, heads);
-  const m = new THREE.Matrix4();
-  const update = (t: number) => {
-    seats.forEach((s, i) => {
-      const bob = 0.015 * Math.sin(t * s.rate * Math.PI * 2 + s.phase);
-      bodies.setMatrixAt(i, m.makeTranslation(s.x, s.y, s.z + 0.3 + bob));
-      heads.setMatrixAt(i, m.makeTranslation(s.x, s.y, s.z + 0.66 + bob));
-    });
-    bodies.instanceMatrix.needsUpdate = true;
-    heads.instanceMatrix.needsUpdate = true;
-  };
-  update(0);
 
   // 光：天光（地面反射草绿）+ 左后方的太阳（影子落向画面右下）+ 镜头方向的补光（不投影，
   // 照亮背光的远端人物的脸和看台）
@@ -220,5 +186,5 @@ export function buildScenery(root: THREE.Object3D, anisotropy: number): Scenery 
   sun.shadow.normalBias = 0.02;
   root.add(sun, sun.target);
 
-  return { update };
+  return { seats };
 }

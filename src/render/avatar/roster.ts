@@ -1,9 +1,11 @@
 /**
  * 可选的人物：代码生成的 Q 版人物（两种配色）和 Kenney 的卡通人物（带骨骼的模型，四套衣服，CC0）。
  * 带骨骼的模型要先下载：开局前 preloadAvatars(选择)，之后 Renderer 按 avatarsInUse() 同步创建。
- * 下载失败（离线等）时那一边退回 Q 版人物。
+ * 看台上的观众也是这些人物（加上几种随机配色的 Q 版），所以四套衣服都下载。
+ * 下载失败（离线等）时那一边退回 Q 版人物，观众也只有 Q 版。
  */
 import type { Side } from '@/sim/constants';
+import { type BakedAvatar, bakeAvatar } from './bake';
 import type { KenneyAssets, KenneySkin } from './KenneyBody';
 import { ProceduralBody } from './ProceduralBody';
 import type { AvatarBody, AvatarLook } from './types';
@@ -49,16 +51,15 @@ let kenney: {
   create: (a: KenneyAssets, s: KenneySkin, t: boolean) => AvatarBody;
 } | null = null;
 
-/** 开局前：记下两边用谁，带骨骼的模型先下载好 */
+const KENNEY_SKINS: KenneySkin[] = ['skater-boy', 'skater-girl', 'suit', 'cyborg'];
+
+/** 开局前：记下两边用谁，带骨骼的模型（四套衣服，观众也要用）先下载好 */
 export async function preloadAvatars(choice: Record<Side, AvatarId>): Promise<void> {
   inUse = { ...choice };
-  const skins = [...new Set(Object.values(choice))].filter(
-    (id) => !isProcedural(id)
-  ) as KenneySkin[];
-  if (skins.length === 0) return;
+  if (kenney) return;
   try {
     const m = await import('./KenneyBody');
-    const assets = await m.loadKenney(skins);
+    const assets = await m.loadKenney(KENNEY_SKINS);
     kenney = { assets, create: (a, s, t) => new m.KenneyBody(a, s, t) };
   } catch (e) {
     console.warn('人物模型下载失败，改用 Q 版人物', e);
@@ -79,4 +80,35 @@ export function createAvatarBody(id: AvatarId, translucent: boolean): AvatarBody
   if (look) return new ProceduralBody(look, translucent);
   if (!kenney) throw new Error(`人物「${id}」的模型还没下载（先 preloadAvatars）`);
   return kenney.create(kenney.assets, id as KenneySkin, translucent);
+}
+
+/** 看台上 Q 版观众的随机配色 */
+const CROWD_SHIRTS = [
+  0xe63946, 0xf4a261, 0xe9c46a, 0x2a9d8f, 0x457b9d, 0xffffff, 0x8ecae6, 0xff8fab,
+];
+const CROWD_SKINS = [0xf1c9a5, 0xe0ac7e, 0xc68642, 0x8d5524, 0xffdbac];
+const CROWD_HAIR = [0x2b1d14, 0x3a2a1f, 0x6b4423, 0xc9a35b, 0x111111];
+
+/**
+ * 观众用的人物：名单里的每个人（Kenney 没下载成就只有 Q 版），再加几种随机配色的 Q 版，各烘焙成两个姿势
+ */
+export function crowdKit(extraLooks = 4): BakedAvatar[] {
+  const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
+  const bodies: AvatarBody[] = ROSTER.filter((e) => isProcedural(e.id) || kenney).map((e) =>
+    createAvatarBody(e.id, false)
+  );
+  for (let i = 0; i < extraLooks; i++)
+    bodies.push(
+      new ProceduralBody(
+        {
+          shirt: pick(CROWD_SHIRTS),
+          shorts: 0x2b2d38,
+          skin: pick(CROWD_SKINS),
+          hair: pick(CROWD_HAIR),
+          hairStyle: Math.random() < 0.5 ? 'short' : 'bun',
+        },
+        false
+      )
+    );
+  return bodies.map(bakeAvatar);
 }

@@ -5,6 +5,8 @@ const BLADE_R = 0.078;
 
 export function createPaddleMesh(): THREE.Group {
   const paddle = new THREE.Group();
+  // 烘焙观众时按名字跳过球拍
+  paddle.name = 'paddle';
   const red = new THREE.Mesh(
     new THREE.CylinderGeometry(BLADE_R, BLADE_R, 0.004, 32),
     new THREE.MeshStandardMaterial({ color: 0xd62828, roughness: 0.5 })

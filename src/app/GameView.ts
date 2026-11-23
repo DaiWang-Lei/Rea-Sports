@@ -175,12 +175,16 @@ export class GameView {
     if (n === 8 || n === 14) this.sfx.crowd('ooh');
     if (n < 8) {
       this.sfx.setCrowd(CROWD.calm, 0, 0.8);
+      this.renderer.crowd.mood(0);
     } else if (n < 20) {
       const k = (n - 7) / 12;
       this.sfx.setCrowd(CROWD.calm * (1 - 0.3 * k), CROWD.excited * k, 0.5);
+      // 看台上举手的人跟着越来越多
+      this.renderer.crowd.mood(k);
     } else {
       this.sfx.setCrowd(0, 0, 1.2);
       this.sfx.setEcho(CROWD.echo, 1);
+      this.renderer.crowd.mood(0, true);
     }
   }
 
@@ -227,6 +231,8 @@ export class GameView {
         this.sfx.setEcho(0);
         this.sfx.crowd('cheer', e.rallyHits >= 8 ? 1 : 0.6);
         this.sfx.setCrowd(CROWD.calm, 0, 1.5);
+        this.renderer.crowd.mood(0);
+        this.renderer.crowd.cheer(e.rallyHits >= 8 ? 1 : 0.4);
         this.renderer.pointReaction(e.winner);
         const who = e.winner === 'near' ? this.names.near : this.names.far;
         this.hud.flash(
@@ -250,6 +256,7 @@ export class GameView {
             : `${e.result === 'near' ? this.names.near : this.names.far}获胜`;
         this.hud.flash(text, `${e.score.near} : ${e.score.far}`, 0, 'big');
         this.sfx.crowd('cheer', 1);
+        this.renderer.crowd.cheer(1);
         if (e.result !== 'draw') this.renderer.pointReaction(e.result, true);
         break;
       }
