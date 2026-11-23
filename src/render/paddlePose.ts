@@ -80,13 +80,20 @@ const smooth = (t: number) => t * t * (3 - 2 * t);
 const lerpV = (a: Vec3, b: Vec3, t: number): Vec3 =>
   vec3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
 
+/**
+ * 等球时拍面中心在身体局部的位置（米）：往持拍一侧、往前、离地高度。
+ * 像 WSR 的 Mii：拍子竖在胸前偏持拍一侧、贴近身体，拍头朝上、拍面对着对方，握拍的拳头在腹前
+ */
+export const READY_PADDLE = { side: 0.2, fwd: 0.3, z: 1.05 };
+
 export function readyPaddle(body: { x: number; y: number }, p: PlayerSim): PaddlePose {
   const f = sideDir(p.side);
   const fh = forehandSign(p);
   return {
-    pos: vec3(body.x + fh * 0.28, body.y + f * 0.42, TABLE.height + 0.18),
-    normal: normalize(vec3(-fh * 0.3, f, 0.1)),
-    handle: normalize(vec3(fh * 0.2, -f * 0.5, -0.8)),
+    pos: vec3(body.x + fh * READY_PADDLE.side, body.y + f * READY_PADDLE.fwd, READY_PADDLE.z),
+    normal: normalize(vec3(-fh * 0.2, f, 0.05)),
+    // 拍柄朝下、略朝身体中线：拍头往上、略往外
+    handle: normalize(vec3(-fh * 0.25, -f * 0.2, -1)),
   };
 }
 

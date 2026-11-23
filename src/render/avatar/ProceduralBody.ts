@@ -1,17 +1,18 @@
 /**
  * 代码生成的 Q 版人物（AvatarBody 的一种实现，以后可以换成带骨骼的模型，见 types.ts）：
- * 大头（眼睛、腮红、微笑、头发）、收腰的球衣、短裤、球鞋、两只手臂，双色球拍（红 = 正手面，黑 = 反手面）。
+ * 大头（眼睛、腮红、微笑、头发）、收腰的球衣、短裤、球鞋、两只拳头，双色球拍（红 = 正手面，黑 = 反手面）。
  *
  * 骨架：身体节点（位置、朝向）→ 骨盆（短裤、两个髋关节）→ 腰（上衣、脖子、头、两个肩点）。
- * 手臂、腿是一节节圆柱，每帧按算出来的关节位置摆：持拍手从肩点到 pose.grip、腿从髋到 pose.feet，
- * 中间的肘、膝用两段反向运动学求。
+ * 腿是两节圆柱，每帧从髋摆到 pose.feet，膝用两段反向运动学求。
+ * 手像 WSR 的 Mii 一样没有手臂，只有两只悬空的拳头：持拍的拳头挂在球拍上、包住拍柄；
+ * 另一只按 pose.freeHand 的方向和标准臂长算出位置（所以用不到 pose.grip、pose.elbowPole，那是给带手臂的模型的）。
  *
  * 近端的自己画成半透明（WSR / NSSR 的做法），保证随时看得到球：先只写一遍深度，再只把最前面那层表面半透明地画出来，
  * 身体各部分不会互相透出来；球拍始终不透明。
  */
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
-import { FOREARM, UPPER_ARM } from '../paddlePose';
+import { FOREARM, GRIP_TO_CENTER, UPPER_ARM } from '../paddlePose';
 import type { AvatarBody, AvatarLook, AvatarPose } from './types';
 
 const BLADE_R = 0.078;
@@ -91,11 +92,10 @@ function shirtGeometry(): THREE.BufferGeometry {
   return g;
 }
 
-interface Limb {
+interface Leg {
   upper: THREE.Mesh;
-  sleeve: THREE.Mesh | null;
   lower: THREE.Mesh;
-  end: THREE.Object3D;
+  shoe: THREE.Object3D;
 }
 
 export class ProceduralBody implements AvatarBody {
@@ -106,9 +106,8 @@ export class ProceduralBody implements AvatarBody {
   private readonly head = new THREE.Group();
   private readonly shoulders = { r: new THREE.Object3D(), l: new THREE.Object3D() };
   private readonly hipJoints: THREE.Object3D[] = [];
-  private readonly legs: Limb[] = [];
-  private readonly paddleArm: Limb;
-  private readonly freeArm: Limb;
+  private readonly legs: Leg[] = [];
+  private readonly freeFist: THREE.Group;
   private readonly paddle = new THREE.Group();
   private readonly bodyMaterials: THREE.MeshStandardMaterial[] = [];
   private readonly baseOpacity: number;
@@ -239,29 +238,42 @@ export class ProceduralBody implements AvatarBody {
       stripe.scale.set(0.072, 0.09, 0.03);
       stripe.position.set(0, 0.02, -0.02);
       shoe.add(sole, stripe);
-      const leg: Limb = {
+      const leg: Leg = {
         upper: mesh(new THREE.CylinderGeometry(0.06, 0.052, 1, 12), look.skin),
-        sleeve: null,
         lower: mesh(new THREE.CylinderGeometry(0.052, 0.045, 1, 12), look.skin),
-        end: shoe,
+        shoe,
       };
       this.group.add(leg.upper, leg.lower, shoe);
       this.legs.push(leg);
     }
 
-    // ---- 两只手臂（世界坐标，每帧按肩、肘、手摆）
-    const arm = (): Limb => {
-      const a: Limb = {
-        upper: mesh(new THREE.CylinderGeometry(0.045, 0.04, 1, 12), look.skin),
-        sleeve: mesh(new THREE.CylinderGeometry(0.068, 0.06, 1, 14), look.shirt),
-        lower: mesh(new THREE.CylinderGeometry(0.04, 0.036, 1, 12), look.skin),
-        end: mesh(new THREE.SphereGeometry(0.048, 14, 10), look.skin),
-      };
-      this.group.add(a.upper, a.sleeve!, a.lower, a.end);
-      return a;
+    // ---- 两只拳头：圆圆的手掌 + 一个拇指
+    const fist = (m: THREE.Material, thumbAt: Vec3, thumbSize: Vec3): THREE.Group => {
+      const g = new THREE.Group();
+      const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), m);
+      palm.scale.set(0.05, 0.047, 0.055);
+      const thumb = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), m);
+      thumb.scale.set(thumbSize.x, thumbSize.y, thumbSize.z);
+      thumb.position.set(thumbAt.x, thumbAt.y, thumbAt.z);
+      g.add(palm, thumb);
+      return g;
     };
-    this.paddleArm = arm();
-    this.freeArm = arm();
+    // 持拍的拳头挂在球拍上（球拍局部：Y = 红面法向，−Z = 拍柄方向），包住握拍处，拇指压在红面一侧、指向拍面。
+    // 和球拍一样始终不透明（半透明的自己也看得清握拍）
+    const gripFist = fist(
+      new THREE.MeshStandardMaterial({ color: look.skin, roughness: 0.6 }),
+      { x: 0, y: 0.038, z: 0.035 },
+      { x: 0.017, y: 0.017, z: 0.03 }
+    );
+    gripFist.position.z = -GRIP_TO_CENTER;
+    this.paddle.add(gripFist);
+    // 另一只拳头跟着胸转（胸的局部：x 右、y 前、z 上），拇指在上面、朝前
+    this.freeFist = fist(
+      mat(look.skin, 0.6),
+      { x: 0, y: 0.02, z: 0.042 },
+      { x: 0.017, y: 0.03, z: 0.017 }
+    );
+    this.group.add(this.freeFist);
 
     // ---- 球拍：局部 Y = 红面法向，局部 −Z = 拍柄方向
     const red = new THREE.Mesh(
@@ -334,16 +346,13 @@ export class ProceduralBody implements AvatarBody {
     this.paddle.position.set(p.paddle.pos.x, p.paddle.pos.y, p.paddle.pos.z);
     this.paddle.quaternion.set(p.paddle.quat.x, p.paddle.quat.y, p.paddle.quat.z, p.paddle.quat.w);
 
-    // 持拍手：胸上的肩点 → 肘 → 握拍处
-    const side = p.paddleSide > 0 ? 'r' : 'l';
-    const s = this.inGroup(this.shoulders[side]);
-    this.place(this.paddleArm, s, twoBone(s, p.grip, UPPER_ARM, FOREARM, p.elbowPole), p.grip);
-
-    // 另一只手：方向在胸的局部坐标里
-    const s2 = this.inGroup(this.shoulders[side === 'r' ? 'l' : 'r']);
-    const e2 = add(s2, this.chestDir(p.freeHand.upper), UPPER_ARM);
-    const g2 = add(e2, this.chestDir(p.freeHand.fore), FOREARM * p.freeHand.reach);
-    this.place(this.freeArm, s2, e2, g2);
+    // 另一只拳头：从另一侧的肩点按 pose.freeHand 的方向（胸的局部坐标）、标准臂长算出位置
+    const chest = this.chestQuat();
+    const s2 = this.inGroup(this.shoulders[p.paddleSide > 0 ? 'l' : 'r']);
+    const e2 = add(s2, chestDir(chest, p.freeHand.upper), UPPER_ARM);
+    const g2 = add(e2, chestDir(chest, p.freeHand.fore), FOREARM * p.freeHand.reach);
+    this.freeFist.position.set(g2.x, g2.y, g2.z);
+    this.freeFist.quaternion.copy(chest);
 
     // 腿：髋 → 膝 → 脚踝
     this.legs.forEach((leg, i) => {
@@ -352,8 +361,8 @@ export class ProceduralBody implements AvatarBody {
       const knee = twoBone(hip, ankle, THIGH, SHIN, p.kneePoles[i]);
       segment(leg.upper, hip, knee);
       segment(leg.lower, knee, ankle);
-      leg.end.position.set(ankle.x, ankle.y, ankle.z);
-      leg.end.rotation.set(0, 0, p.facing > 0 ? 0 : Math.PI);
+      leg.shoe.position.set(ankle.x, ankle.y, ankle.z);
+      leg.shoe.rotation.set(0, 0, p.facing > 0 ? 0 : Math.PI);
     });
   }
 
@@ -364,26 +373,15 @@ export class ProceduralBody implements AvatarBody {
     return { x: v.x, y: v.y, z: v.z };
   }
 
-  /** 胸的局部坐标里的方向 → group 坐标里的方向（单位向量） */
-  private chestDir(d: Vec3): Vec3 {
-    const q = this.spine.getWorldQuaternion(new THREE.Quaternion());
+  /** 胸在 group 坐标里的朝向 */
+  private chestQuat(): THREE.Quaternion {
     const gq = this.group.getWorldQuaternion(new THREE.Quaternion()).invert();
-    const v = new THREE.Vector3(d.x, d.y, d.z).normalize().applyQuaternion(q).applyQuaternion(gq);
-    return { x: v.x, y: v.y, z: v.z };
+    return gq.multiply(this.spine.getWorldQuaternion(new THREE.Quaternion()));
   }
+}
 
-  private place(a: Limb, s: Vec3, e: Vec3, g: Vec3): void {
-    segment(a.upper, s, e);
-    // 袖子盖住上臂靠肩的一截
-    if (a.sleeve) {
-      const d = Math.hypot(e.x - s.x, e.y - s.y, e.z - s.z) || 1;
-      segment(
-        a.sleeve,
-        s,
-        add(s, { x: (e.x - s.x) / d, y: (e.y - s.y) / d, z: (e.z - s.z) / d }, 0.12)
-      );
-    }
-    segment(a.lower, e, g);
-    a.end.position.set(g.x, g.y, g.z);
-  }
+/** 胸的局部坐标里的方向 → group 坐标里的方向（单位向量） */
+function chestDir(chest: THREE.Quaternion, d: Vec3): Vec3 {
+  const v = new THREE.Vector3(d.x, d.y, d.z).normalize().applyQuaternion(chest);
+  return { x: v.x, y: v.y, z: v.z };
 }

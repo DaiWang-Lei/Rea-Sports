@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { AvatarMotion } from '@/render/avatar/motion';
-import type { PaddlePose } from '@/render/paddlePose';
+import { type PaddlePose, READY_PADDLE } from '@/render/paddlePose';
+
+/** 准备位置（身体局部） */
+const RS = READY_PADDLE.side;
+const RF = READY_PADDLE.fwd;
 
 /** 近端、右手：身体在原点，朝 +y；球拍在身体局部 (x, y, z) */
 const paddleAt = (x: number, y: number, z = 0.95): PaddlePose => ({
@@ -25,7 +29,7 @@ function settle(m: AvatarMotion, p: PaddlePose, frames = 40, body = { x: 0, y: -
 
 describe('人物动作（和模型无关）', () => {
   it('拍子在准备位置：上身基本不转，微蹲、微微前倾', () => {
-    const pose = settle(new AvatarMotion(), paddleAt(0.28, 0.42));
+    const pose = settle(new AvatarMotion(), paddleAt(RS, RF));
     expect(Math.abs(pose.spine.yaw)).toBeLessThan(0.05);
     expect(pose.spine.pitch).toBeGreaterThan(0.05);
     expect(pose.pelvis.drop).toBeGreaterThan(0.02);
@@ -49,7 +53,7 @@ describe('人物动作（和模型无关）', () => {
   });
 
   it('脚踩在地上；远端（朝 −y）左右镜像', () => {
-    const near = settle(new AvatarMotion(), paddleAt(0.28, 0.42));
+    const near = settle(new AvatarMotion(), paddleAt(RS, RF));
     for (const f of near.feet) expect(f.z).toBeLessThan(0.1);
     const m = new AvatarMotion();
     const body = { x: 0, y: 2 };
@@ -58,7 +62,7 @@ describe('人物动作（和模型无关）', () => {
       -1,
       -1,
       {
-        pos: { x: -0.28, y: 2 - 0.42, z: 0.95 },
+        pos: { x: -RS, y: 2 - RF, z: 0.95 },
         normal: { x: 0, y: -1, z: 0 },
         handle: { x: 0, y: 0.3, z: -1 },
       },
@@ -70,7 +74,7 @@ describe('人物动作（和模型无关）', () => {
         -1,
         -1,
         {
-          pos: { x: -0.28, y: 2 - 0.42, z: 0.95 },
+          pos: { x: -RS, y: 2 - RF, z: 0.95 },
           normal: { x: 0, y: -1, z: 0 },
           handle: { x: 0, y: 0.3, z: -1 },
         },
@@ -84,7 +88,7 @@ describe('人物动作（和模型无关）', () => {
   it('脚踩实了不滑：身体挪 5 厘米，两只脚都不动', () => {
     const m = new AvatarMotion();
     const p = (x: number) => ({
-      pos: { x: x + 0.28, y: -2 + 0.42, z: 0.95 },
+      pos: { x: x + RS, y: -2 + RF, z: 0.95 },
       normal: { x: 0, y: 1, z: 0 },
       handle: { x: 0, y: -0.3, z: -1 },
     });
@@ -103,7 +107,7 @@ describe('人物动作（和模型无关）', () => {
   it('横向跑动：两只脚轮流迈（不同时离地），跑完脚跟上身体', () => {
     const m = new AvatarMotion();
     const p = (x: number) => ({
-      pos: { x: x + 0.28, y: -2 + 0.42, z: 0.95 },
+      pos: { x: x + RS, y: -2 + RF, z: 0.95 },
       normal: { x: 0, y: 1, z: 0 },
       handle: { x: 0, y: -0.3, z: -1 },
     });
@@ -130,9 +134,9 @@ describe('人物动作（和模型无关）', () => {
 
   it('头跟着球：球在左前方就往左转；球不在场上看前方', () => {
     const m = new AvatarMotion();
-    const pp = paddleAt(0.28, 0.42);
+    const pp = paddleAt(RS, RF);
     const body = { x: 0, y: -2 };
-    const pad = { ...pp, pos: { x: 0.28, y: -2 + 0.42, z: 0.95 } };
+    const pad = { ...pp, pos: { x: RS, y: -2 + RF, z: 0.95 } };
     let pose = m.update(body, 1, 1, pad, 1 / 60, { x: -1, y: -0.5, z: 1 });
     for (let i = 0; i < 30; i++) pose = m.update(body, 1, 1, pad, 1 / 60, { x: -1, y: -0.5, z: 1 });
     expect(pose.head.yaw).toBeGreaterThan(0.3);
@@ -142,7 +146,7 @@ describe('人物动作（和模型无关）', () => {
 
   it('得分举拳跳起，失分低头', () => {
     const body = { x: 0, y: -2 };
-    const pad = { ...paddleAt(0.28, 0.42), pos: { x: 0.28, y: -2 + 0.42, z: 0.95 } };
+    const pad = { ...paddleAt(RS, RF), pos: { x: RS, y: -2 + RF, z: 0.95 } };
     const w = new AvatarMotion();
     w.update(body, 1, 1, pad, 1 / 60);
     w.react('win');

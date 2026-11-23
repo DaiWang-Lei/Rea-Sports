@@ -15,7 +15,7 @@
  */
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
-import { GRIP_TO_CENTER, type PaddlePose } from '../paddlePose';
+import { GRIP_TO_CENTER, type PaddlePose, READY_PADDLE } from '../paddlePose';
 import type { AvatarPose } from './types';
 
 /** 动作幅度：上身最多扭转、前倾、侧倾多少（弧度），最多下蹲多少（米） */
@@ -26,8 +26,6 @@ const CROUCH_MAX = 0.18;
 /** 等球时的准备姿势：半蹲、上身微微前倾 */
 const READY_CROUCH = 0.08;
 const READY_LEAN = 0.14;
-/** 准备位置：球拍在持拍一侧身体外 0.28 米（readyPaddle）时上身不转 */
-const READY_SIDE = 0.28;
 /** 跑动的步伐相位：每走这么远一步（米，只用来算起伏） */
 const STRIDE = 0.4;
 /** 脚踝高度、两脚间距（米） */
@@ -141,19 +139,19 @@ export class AvatarMotion {
     const crouch = st.crouch + 0.05 * lose;
     this.lookAt(body, facing, crouch, ball, dt);
 
-    // 另一只手（在胸的局部坐标里）：平时上臂垂在身侧略向前、前臂抬到腰前；得分举拳，失分垂下
+    // 另一只手（在胸的局部坐标里）：平时握拳放在腹前（上臂垂在身侧略向前、前臂往前往里收）；得分举拳，失分垂下
     const out = -sd;
-    let upper = unit(out * 0.2, 0.25, -1);
-    let fore = unit(-out * 0.35, 0.9, 0.25);
-    let reach = 0.85;
+    let upper = unit(out * 0.05, 0.3, -1);
+    let fore = unit(-out * 0.55, 0.82, 0.17);
+    let reach = 0.57;
     if (win > 0) {
       upper = blendDir(upper, unit(out * 0.35, 0.15, 1), win);
       fore = blendDir(fore, unit(-out * 0.05, 0.3, 1), win);
-      reach -= 0.05 * win;
+      reach += (0.8 - reach) * win;
     } else if (lose > 0) {
       upper = blendDir(upper, unit(out * 0.1, 0.05, -1), lose);
       fore = blendDir(fore, unit(out * 0.05, 0.15, -1), lose);
-      reach += 0.1 * lose;
+      reach += (0.95 - reach) * lose;
     }
 
     return {
@@ -306,11 +304,11 @@ export class AvatarMotion {
     const vx = lp && dt > 0 ? (lx - lp.x) / dt : 0;
     this.paddleVx = follow(this.paddleVx, clamp(vx, -12, 12), dt, 0.04);
 
-    // 扭转：持拍一侧为正方向的横向位置 + 挥动方向的提前量
-    const u = clamp((lx * sd - READY_SIDE) / 0.45 + 0.06 * this.paddleVx * sd, -1, 1);
+    // 扭转：持拍一侧为正方向的横向位置（拍子在准备位置时不转）+ 挥动方向的提前量
+    const u = clamp((lx * sd - READY_PADDLE.side) / 0.45 + 0.06 * this.paddleVx * sd, -1, 1);
     const twist = -sd * TWIST_MAX * u;
-    // 前倾：拍子往前伸得越远越前倾；快速挥动时多压一点
-    const reachFwd = clamp((ly - 0.4) / 0.4, -0.5, 1);
+    // 前倾：拍子比准备位置往前伸得越远越前倾；快速挥动时多压一点
+    const reachFwd = clamp((ly - READY_PADDLE.fwd) / 0.4, -0.5, 1);
     const swingSpeed = Math.min(1, Math.abs(this.paddleVx) / 6);
     const lean = READY_LEAN + 0.2 * reachFwd + 0.12 * swingSpeed;
     // 侧倾：拍子偏出身体 0.55 米以外就往那边倒（够远球）；挥得快时也往拍子那一侧压过去（Wii 的 Mii 击球时整个人倒向那边）
