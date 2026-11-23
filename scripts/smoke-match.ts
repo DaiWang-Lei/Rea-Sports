@@ -59,7 +59,8 @@ let pausedOnce = false;
 let midShot = false;
 const t0 = Date.now();
 let s = await state();
-while (Date.now() - t0 < 240000) {
+// 陪练级电脑很少失误，一分常打十几拍，一局要三到六分钟
+while (Date.now() - t0 < 420000) {
   s = await state();
   if (s.step === 'over') break;
   if (s.step !== 'play' || s.paused) {
