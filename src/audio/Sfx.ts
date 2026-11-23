@@ -4,12 +4,15 @@
  *  - 击球、落台、落地：每种几下不同的录音（拼在一个 WAV 里，每格 SLOT 秒，撞击在每格开头 1ms 处，不会比画面晚），
  *    随机挑一下（不连着重复同一下），音高随机偏 ±3%，力度控制音量；
  *  - 球网：落台的录音放慢、滤掉高频，闷一点；
- *  - 观众：得分欢呼、长回合得分的大欢呼、回合打长了的一声「哦——」。
+ *  - 观众：两层一直循环的人声（平时的低语、激动的欢呼），由 setCrowd 调两层的音量；
+ *    外加得分欢呼、长回合得分的大欢呼、回合打长了的一声「哦——」。
  * 浏览器要求用户点击后才能出声：第一次交互时调用 unlock()。素材在创建时就开始下载，解锁后解码。
  */
 import { clamp } from '@/core/math';
 import cheerBigUrl from './samples/cheer-big.mp3?url';
 import cheerUrl from './samples/cheer.mp3?url';
+import excitedUrl from './samples/crowd-excited.mp3?url';
+import murmurUrl from './samples/crowd-murmur.mp3?url';
 import floorUrl from './samples/floor.wav?url';
 import oohUrl from './samples/ooh.mp3?url';
 import paddleUrl from './samples/paddle.wav?url';
@@ -25,8 +28,14 @@ const FILES = {
   cheer: cheerUrl,
   cheerBig: cheerBigUrl,
   ooh: oohUrl,
+  murmur: murmurUrl,
+  excited: excitedUrl,
 };
 type SampleName = keyof typeof FILES;
+
+/** 一直循环的观众声 */
+const BEDS = ['murmur', 'excited'] as const;
+type Bed = (typeof BEDS)[number];
 
 /** 撞击素材里有几下 */
 const SLOTS: Partial<Record<SampleName, number>> = { paddle: 6, table: 6, floor: 3 };
@@ -56,6 +65,9 @@ export class Sfx {
   private buffers: Partial<Record<SampleName, AudioBuffer>> = {};
   private decoding: Promise<void> = Promise.resolve();
   private readonly lastSlot: Partial<Record<SampleName, number>> = {};
+  /** 两层循环观众声的音量节点；还没解码完时只记目标音量 */
+  private readonly beds: Partial<Record<Bed, GainNode>> = {};
+  private readonly bedTarget: Record<Bed, number> = { murmur: 0, excited: 0 };
   enabled = true;
 
   constructor() {
@@ -92,10 +104,20 @@ export class Sfx {
     return !!this.ctx && this.enabled && (this.offline || this.ctx.state === 'running');
   }
 
-  /** 回声湿声比例（长回合时加回声） */
-  setEcho(wet: number): void {
+  /** 回声湿声比例（长回合时加回声）；tau = 变化的时间常数（秒），越大变得越慢 */
+  setEcho(wet: number, tau = 0.3): void {
     if (this.reverbGain && this.ctx)
-      this.reverbGain.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.3);
+      this.reverbGain.gain.setTargetAtTime(wet, this.ctx.currentTime, tau);
+  }
+
+  /** 两层循环观众声的音量：murmur = 平时的低语，excited = 激动的欢呼；tau = 变化的时间常数（秒） */
+  setCrowd(murmur: number, excited: number, tau = 0.5): void {
+    this.bedTarget.murmur = murmur;
+    this.bedTarget.excited = excited;
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.beds.murmur?.gain.setTargetAtTime(murmur, t, tau);
+    this.beds.excited?.gain.setTargetAtTime(excited, t, tau);
   }
 
   /** 击球：力度 q ∈ [0,1]；pan ∈ [−1,1]；扣杀 / 强力发球更响、音调稍低更「实」 */
@@ -160,6 +182,23 @@ export class Sfx {
         }
       })
     );
+    this.startBeds(ctx);
+  }
+
+  /** 循环观众声：解码完就一直放（音量按 setCrowd 的目标，默认 0 = 听不到），各自从随机位置开始 */
+  private startBeds(ctx: BaseAudioContext): void {
+    for (const name of BEDS) {
+      const buf = this.buffers[name];
+      if (!buf || this.beds[name]) continue;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const g = ctx.createGain();
+      g.gain.value = this.bedTarget[name];
+      src.connect(g).connect(this.master!);
+      src.start(ctx.currentTime, Math.random() * buf.duration);
+      this.beds[name] = g;
+    }
   }
 
   /** 放一段素材；撞击类随机挑一格（不连着重复同一格），音高随机偏 ±3% */

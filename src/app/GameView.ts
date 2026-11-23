@@ -28,6 +28,9 @@ export interface GameViewOptions {
   onEvent?: (e: MatchEvent) => void;
 }
 
+/** 观众声的音量：平时的低语、激动到顶时的欢呼层、全场安静后击球声的回声比例 */
+const CROWD = { calm: 0.22, excited: 0.55, echo: 0.4 };
+
 export class GameView {
   readonly renderer: Renderer;
   readonly hud: Hud;
@@ -55,6 +58,7 @@ export class GameView {
     this.hud = new Hud(container, opts.names);
     this.sim = sim;
     this.prev = this.snapshot();
+    this.sfx.setCrowd(CROWD.calm, 0);
   }
 
   setSim(sim: MatchSim): void {
@@ -162,6 +166,24 @@ export class GameView {
     );
   }
 
+  /**
+   * 观众跟着回合走（模仿 WSR 长回合时「全场屏息」的感觉，层层推进而不是一下子安静）：
+   * 平时轻声低语；第 8 拍起越来越激动（第 8、14 拍各「哦——」一声）；第 20 拍起两三秒里慢慢静下来，
+   * 击球声的回声慢慢浮现；得分时欢呼（见 point 事件）
+   */
+  private crowdFollow(n: number): void {
+    if (n === 8 || n === 14) this.sfx.crowd('ooh');
+    if (n < 8) {
+      this.sfx.setCrowd(CROWD.calm, 0, 0.8);
+    } else if (n < 20) {
+      const k = (n - 7) / 12;
+      this.sfx.setCrowd(CROWD.calm * (1 - 0.3 * k), CROWD.excited * k, 0.5);
+    } else {
+      this.sfx.setCrowd(0, 0, 1.2);
+      this.sfx.setEcho(CROWD.echo, 1);
+    }
+  }
+
   /** 近端的人抛了球、还没发出去：最佳击球高度的提示圈（球是竖直抛的，圈就在球的正下方 / 正上方） */
   private serveCue(): ServeCue | null {
     const s = this.sim;
@@ -187,9 +209,7 @@ export class GameView {
           this.hud.flash('扣杀!', '', 0.9, 'big');
           this.shakeUntil = this.sim.t + 0.12;
         }
-        // 长回合：第 8 拍观众「哦——」一声，再长就安静下来、球声带回声
-        if (e.rallyHits === 8) this.sfx.crowd('ooh');
-        this.sfx.setEcho(e.rallyHits >= 20 ? 0.45 : 0);
+        this.crowdFollow(e.rallyHits);
         break;
       }
       case 'bounce':
@@ -203,8 +223,10 @@ export class GameView {
         this.sfx.floor(e.impact, pan(e.p));
         break;
       case 'point': {
+        // 得分：回声收掉、全场欢呼，再慢慢回到平时的低语
         this.sfx.setEcho(0);
         this.sfx.crowd('cheer', e.rallyHits >= 8 ? 1 : 0.6);
+        this.sfx.setCrowd(CROWD.calm, 0, 1.5);
         const who = e.winner === 'near' ? this.names.near : this.names.far;
         this.hud.flash(
           REASON_TEXT[e.reason],

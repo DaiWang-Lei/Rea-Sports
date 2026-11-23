@@ -157,7 +157,7 @@ src/sim/       仿真（纯 TS）：球的物理、击球求解器、裁判与�
                玩家击球判定与映射（hit/HitResolver）、比赛里人的一方（players/HumanPlayer）、
                发球机练习（practice/FeederSim）
 src/render/    three.js 画面：晴天户外球场与看台（Scenery）、球台、球与影子和拖尾、Q 版人物与球拍、击球 / 落台特效、相机
-src/audio/     音效：Freesound 上的 CC0 真实录音（samples/，来源见 NOTICE），随机挑一下、按力度调音量
+src/audio/     音效：CC0 真实录音（samples/，来源见 NOTICE），撞击声随机挑一下、按力度调音量；观众两层循环声随回合推进
 src/ui/        画面文字层（比分、提示）
 src/app/       入口、自动演示、和电脑对打（match/）、发球机练习页（practice/）、
                两者共用的连接与校准、延迟补偿（shared/）、体感输入管理（input/）
