@@ -50,3 +50,9 @@ crowd-excited.mp3 由下面四段错开叠成、做成 12 秒无缝循环：
                   Voice_Crowd_Small_Expression_Applause_Cheer  Nox_Sound          https://freesound.org/s/752709/
                   CROWDS-APPLAUSE_CheeringApplauseShort     zoway.sound           https://freesound.org/s/875589/
                   CRWDCheer_Short Affirmative Cheer         ShangusBurger         https://freesound.org/s/763947/
+
+--------------------------------------------------------------------------------
+src/render/avatar/kenney/ 人物模型与贴图：Kenney「Animated Characters Protagonists」1.1
+（https://kenney.nl/assets/animated-characters-1），CC0 1.0（公有领域，无需署名）。
+原始 FBX 转成了 glb（去掉动画），四张衣服贴图原样使用。
+--------------------------------------------------------------------------------

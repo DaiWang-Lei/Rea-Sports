@@ -36,7 +36,7 @@ pnpm dev          # 打开 https://localhost:5288
 
 | 页面       | 地址                                  | 用途                                                               |
 | ---------- | ------------------------------------- | ------------------------------------------------------------------ |
-| 菜单       | https://localhost:5288/               | 入口                                                               |
+| 菜单       | https://localhost:5288/               | 入口；选你和对手的人物（存在本机，对打、练习、自动演示都用）       |
 | 和电脑对打 | https://localhost:5288/?mode=match    | 5 个等级的电脑对手，6 分或 11 分一局，自己发球、记分、结算         |
 | 发球机练习 | https://localhost:5288/?mode=practice | 用手机 / Joy-Con / 键盘挥拍回球，每球给出时机、正反手、力度、旋转  |
 | 体感调试页 | https://localhost:5288/imu-debug.html | 连接手机或 Joy-Con、看数据、检查清单、震动、录挥拍样本、看挥拍识别 |
@@ -156,7 +156,8 @@ src/input/     Joy-Con（协议、校准、震动、WebHID 驱动）、手机（
 src/sim/       仿真（纯 TS）：球的物理、击球求解器、裁判与记分、走位、电脑 AI、整局比赛 MatchSim、
                玩家击球判定与映射（hit/HitResolver）、比赛里人的一方（players/HumanPlayer）、
                发球机练习（practice/FeederSim）
-src/render/    three.js 画面：晴天户外球场与看台（Scenery）、球台、球与影子和拖尾、Q 版人物与球拍、击球 / 落台特效、相机
+src/render/    three.js 画面：晴天户外球场与看台（Scenery）、球台、球与影子和拖尾、击球 / 落台特效、相机；
+               人物（avatar/）：动作和模型分开，模型有代码生成的 Q 版人物和带骨骼的 Kenney 卡通人物（菜单里选）
 src/audio/     音效：CC0 真实录音（samples/，来源见 NOTICE），撞击声随机挑一下、按力度调音量；观众两层循环声随回合推进
 src/ui/        画面文字层（比分、提示）
 src/app/       入口、自动演示、和电脑对打（match/）、发球机练习页（practice/）、
@@ -168,7 +169,7 @@ server/        开发服务器插件：手机数据的 WebSocket 中转、局域
 src/net/       极简 MQTT 客户端、WebRTC 握手约定
 fixtures/imu/  真机录制（Joy-Con / iPhone 的正手提示音录制和自由挥拍），用于调参和回归测试
 tests/         vitest 测试
-scripts/       soak（批量对局）、bench-solver
+scripts/       soak（批量对局）、bench-solver、冒烟测试、人物头像生成（pnpm thumbs:avatars）
 ```
 
 `src/core`、`src/sim`、`src/input` 里的纯逻辑部分不依赖浏览器（由 `tsconfig.sim.json` 和 ESLint 强制），
@@ -181,7 +182,8 @@ scripts/       soak（批量对局）、bench-solver
 - [x] M1 物理 / 规则 / 电脑 AI / 自动演示
 - [x] M2 挥拍识别 + 击球判定 + 发球机练习（手机 / Joy-Con / 键盘）—— **待实机试打**
 - [x] M3 和电脑对打：发球（按键 / 向上抖手柄）、选对手和分制、比分、震动、暂停（断开自动暂停）、结算 —— **待实机试打**
-- [x] 画面：晴天户外球场（草地、广告围挡、看台观众、太阳实时阴影）、Q 版人物（近端的自己是淡色半透明）、
+- [x] 画面：晴天户外球场（草地、广告围挡、看台观众、太阳实时阴影）、人物（菜单里选你和对手：两种 Q 版、
+      四套 Kenney 卡通人物；挥拍带动全身、步法、头跟球、得失分反应；近端的自己是淡色半透明）、
       击球圆环 / 落台闪圈 / 渐隐拖尾；M1 Pro 1080p 稳定 60 帧
 - [ ] M4 对照实机视频调手感 —— 工具已就绪（调参面板、视频打点）；已用 3 段 Switch Sports Resort 视频打点
       （击球 → 落对方台约 0.57 秒、两次击球约 0.9 秒，各级都一样），据此收拢了电脑各级球速、电脑改成高抛发球

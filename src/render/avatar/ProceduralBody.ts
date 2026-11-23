@@ -13,9 +13,10 @@
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
 import { FOREARM, GRIP_TO_CENTER, UPPER_ARM } from '../paddlePose';
+import { addScaled as add, twoBone } from './ik';
+import { createPaddleMesh } from './paddleMesh';
 import type { AvatarBody, AvatarLook, AvatarPose } from './types';
 
-const BLADE_R = 0.078;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const tmp = new THREE.Vector3();
 /** 半透明的自己：先画深度（renderOrder 9），再画颜色（10），排在其它半透明物体（球网、球影）之后 */
@@ -39,37 +40,6 @@ function segment(m: THREE.Object3D, a: Vec3, b: Vec3): void {
   m.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
   m.scale.set(1, len, 1);
   m.quaternion.setFromUnitVectors(Y_AXIS, tmp.normalize());
-}
-
-const add = (a: Vec3, d: Vec3, k: number): Vec3 => ({
-  x: a.x + d.x * k,
-  y: a.y + d.y * k,
-  z: a.z + d.z * k,
-});
-const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
-
-/**
- * 两段骨骼（a → 关节 → c，长 l1、l2）的关节位置，关节往 pole 方向弯。
- * 够不着时两段按比例拉长（手、脚仍然到目标位置，不会和球拍 / 地面脱开）
- */
-function twoBone(a: Vec3, c: Vec3, l1: number, l2: number, pole: Vec3): Vec3 {
-  const d = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
-  const len = Math.hypot(d.x, d.y, d.z);
-  if (len < 1e-6) return add(a, pole, l1);
-  const dir = { x: d.x / len, y: d.y / len, z: d.z / len };
-  if (len >= l1 + l2) return add(a, dir, (l1 / (l1 + l2)) * len);
-  const l = Math.max(len, Math.abs(l1 - l2) + 1e-3);
-  const cosA = clamp((l1 * l1 + l * l - l2 * l2) / (2 * l1 * l), -1, 1);
-  const sinA = Math.sqrt(1 - cosA * cosA);
-  const pd = pole.x * dir.x + pole.y * dir.y + pole.z * dir.z;
-  let p = { x: pole.x - pd * dir.x, y: pole.y - pd * dir.y, z: pole.z - pd * dir.z };
-  const pl = Math.hypot(p.x, p.y, p.z);
-  p = pl < 1e-6 ? { x: 0, y: 0, z: 1 } : { x: p.x / pl, y: p.y / pl, z: p.z / pl };
-  return {
-    x: a.x + l1 * (cosA * dir.x + sinA * p.x),
-    y: a.y + l1 * (cosA * dir.y + sinA * p.y),
-    z: a.z + l1 * (cosA * dir.z + sinA * p.z),
-  };
 }
 
 /** 球衣：回转体，腰细、胸宽、肩部收圆（局部 Z 向上，原点在腰） */
@@ -276,26 +246,7 @@ export class ProceduralBody implements AvatarBody {
     this.group.add(this.freeFist);
 
     // ---- 球拍：局部 Y = 红面法向，局部 −Z = 拍柄方向
-    const red = new THREE.Mesh(
-      new THREE.CylinderGeometry(BLADE_R, BLADE_R, 0.004, 32),
-      new THREE.MeshStandardMaterial({ color: 0xd62828, roughness: 0.5 })
-    );
-    red.position.y = 0.003;
-    const black = new THREE.Mesh(
-      new THREE.CylinderGeometry(BLADE_R, BLADE_R, 0.004, 32),
-      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 })
-    );
-    black.position.y = -0.003;
-    const wood = new THREE.Mesh(
-      new THREE.CylinderGeometry(BLADE_R + 0.002, BLADE_R + 0.002, 0.003, 32),
-      new THREE.MeshStandardMaterial({ color: 0xc9a46a, roughness: 0.6 })
-    );
-    const handle = new THREE.Mesh(
-      new THREE.BoxGeometry(0.028, 0.022, 0.1),
-      new THREE.MeshStandardMaterial({ color: 0xc9a46a, roughness: 0.6 })
-    );
-    handle.position.z = -(BLADE_R + 0.045);
-    this.paddle.add(red, black, wood, handle);
+    this.paddle.add(createPaddleMesh());
     this.group.add(this.paddle);
 
     this.group.traverse((o) => {

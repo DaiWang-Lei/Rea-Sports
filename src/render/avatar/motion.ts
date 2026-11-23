@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
 import { GRIP_TO_CENTER, type PaddlePose, READY_PADDLE } from '../paddlePose';
-import type { AvatarPose } from './types';
+import { type AvatarPose, POSE_ANKLE_Z } from './types';
 
 /** 动作幅度：上身最多扭转、前倾、侧倾多少（弧度），最多下蹲多少（米） */
 const TWIST_MAX = 0.75;
@@ -29,7 +29,7 @@ const READY_LEAN = 0.14;
 /** 跑动的步伐相位：每走这么远一步（米，只用来算起伏） */
 const STRIDE = 0.4;
 /** 脚踝高度、两脚间距（米） */
-const ANKLE_Z = 0.05;
+const ANKLE_Z = POSE_ANKLE_Z;
 const STANCE = 0.18;
 /**
  * 步法：脚离该在的位置多远就迈一步（米；身体基本停住时门槛小一点，最后一步预判多了能收回来）、

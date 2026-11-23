@@ -11,9 +11,14 @@
  *    另一只手按 pose.freeHand，两只脚踝到 pose.feet（膝往 pose.kneePoles 弯）；再把骨骼转到对准算出来的关节位置；
  *  - 球拍不属于人物：pose.paddle 给出拍子的位置和朝向，模型层画拍子（或者挂到手骨上）。
  * 模型的比例和现在的不一样也没关系：骨盆、腰的转动是角度，手和脚给的是要到的位置，各自按自己的骨长去够。
+ * 但模型的肩要能缩放到约 1.2 米高、头不超过身高的三分之一：球台和击球高度是真实尺寸，两头身的 Q 版肩膀会比台面还低。
+ * 现成的例子：KenneyBody（加到 roster.ts 的人物名单里，菜单就能选）。
  * 版权：只用 CC0 / CC BY（在 NOTICE 里署名）的原创模型，不用同人作品。
  */
 import type { Vec3 } from '@/core/vec3';
+
+/** pose.feet 的高度约定：脚平放在地上时，脚踝在离地这么高（米）。脚踝高度不同的模型按差值挪 */
+export const POSE_ANKLE_Z = 0.05;
 
 export interface AvatarLook {
   shirt: number;

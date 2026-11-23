@@ -1,29 +1,20 @@
 /**
- * 场上的一个人：动作（AvatarMotion，和模型无关）+ 人物模型（AvatarBody）。
- * 现在的模型是代码生成的 Q 版人物（ProceduralBody）；换成带骨骼的模型只需要另写一个 AvatarBody，
- * 在 createBody 里换掉（接法见 avatar/types.ts）。
+ * 场上的一个人：动作（AvatarMotion，和模型无关）+ 人物模型（AvatarBody：代码生成的 Q 版人物或带骨骼的模型，
+ * 见 avatar/roster.ts；再加一种模型的接法见 avatar/types.ts）。
  */
 import type * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
 import { AvatarMotion, type AvatarReaction } from './avatar/motion';
-import { ProceduralBody } from './avatar/ProceduralBody';
-import type { AvatarBody, AvatarLook } from './avatar/types';
+import type { AvatarBody } from './avatar/types';
 import type { PaddlePose } from './paddlePose';
-
-export type { AvatarLook } from './avatar/types';
-
-/** 换人物模型就换这里 */
-function createBody(look: AvatarLook, translucent: boolean): AvatarBody {
-  return new ProceduralBody(look, translucent);
-}
 
 export class AvatarView {
   private readonly motion = new AvatarMotion();
   private readonly body: AvatarBody;
   private paddlePos: Vec3 = { x: 0, y: 0, z: 0 };
 
-  constructor(root: THREE.Object3D, look: AvatarLook, translucent: boolean) {
-    this.body = createBody(look, translucent);
+  constructor(root: THREE.Object3D, body: AvatarBody) {
+    this.body = body;
     root.add(this.body.group);
   }
 

@@ -28,6 +28,7 @@
     "smoke:match": "tsx scripts/smoke-match.ts",
     "smoke:match-joycon": "tsx scripts/smoke-match-joycon.ts",
     "smoke:tools": "tsx scripts/smoke-tools.ts",
+    "thumbs:avatars": "tsx scripts/avatar-thumbs.ts",
     "eval:swing": "tsx scripts/eval-swing.ts",
     "analyze:practice": "tsx scripts/analyze-practice.ts"
   },

@@ -1,7 +1,10 @@
 import '@/styles/base.css';
 import './app.css';
 import { cpuLevel } from '@/config/difficulty';
+import { preloadAvatars, ROSTER } from '@/render/avatar/roster';
+import { AVATAR_THUMBS } from '@/render/avatar/thumbs';
 import { MatchSim } from '@/sim/MatchSim';
+import { loadAvatarChoice, saveAvatarChoice } from './avatarChoice';
 import { GameView } from './GameView';
 import { MatchApp } from './match/MatchApp';
 import { PracticeApp } from './practice/PracticeApp';
@@ -85,12 +88,32 @@ function startAutoplay(): void {
   window.addEventListener('keydown', () => view.sfx.unlock());
 }
 
+/** 选人物：你、对手各一排，点一下就选中，存在本机 */
+function avatarPicker(): string {
+  const choice = loadAvatarChoice();
+  const row = (side: 'near' | 'far', who: string) => `
+    <div class="avatar-row" data-side="${side}">
+      <span class="dim">${who}</span>
+      <div class="avatar-cards">
+        ${ROSTER.map(
+          (e) => `
+          <button class="avatar-card${choice[side] === e.id ? ' selected' : ''}" data-id="${e.id}">
+            <img src="${AVATAR_THUMBS[e.id]}" alt="" />
+            <span>${e.name}</span>
+          </button>`
+        ).join('')}
+      </div>
+    </div>`;
+  return `<section class="avatar-pick"><h2>人物</h2>${row('near', '你')}${row('far', '对手')}</section>`;
+}
+
 function showMenu(): void {
   app.className = 'menu-root';
   app.innerHTML = `
     <div class="menu">
       <h1>体感乒乓</h1>
       <p class="dim">手感对标 Wii Sports Resort 乒乓球的净室重做 · 开发中</p>
+      ${avatarPicker()}
       <div class="menu-items">
         <a class="menu-item" href="?mode=match">
           <strong>和电脑对打（手机 / Joy-Con / 键盘）</strong>
@@ -136,9 +159,24 @@ function showMenu(): void {
     resetOverrides();
     showMenu();
   });
+  app.querySelectorAll<HTMLElement>('.avatar-row').forEach((row) =>
+    row.addEventListener('click', (ev) => {
+      const card = (ev.target as HTMLElement).closest<HTMLElement>('.avatar-card');
+      const id = ROSTER.find((e) => e.id === card?.dataset.id)?.id;
+      if (!card || !id) return;
+      const side = row.dataset.side === 'far' ? 'far' : 'near';
+      saveAvatarChoice({ ...loadAvatarChoice(), [side]: id });
+      row
+        .querySelectorAll('.avatar-card')
+        .forEach((c) => c.classList.toggle('selected', c === card));
+    })
+  );
 }
 
 const mode = params.get('mode');
+// 进场前先把选的人物准备好（带骨骼的模型要下载）
+if (mode === 'autoplay' || mode === 'match' || mode === 'practice')
+  await preloadAvatars(loadAvatarChoice());
 if (mode === 'autoplay') startAutoplay();
 else if (mode === 'match') new MatchApp(app);
 else if (mode === 'practice') new PracticeApp(app);

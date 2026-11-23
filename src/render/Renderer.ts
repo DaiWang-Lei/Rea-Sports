@@ -7,7 +7,8 @@ import type { Vec3 } from '@/core/vec3';
 import { sideDir, type Side, TABLE } from '@/sim/constants';
 import { forehandSign, type PlayerSim } from '@/sim/players/PlayerSim';
 import { buildArena } from './Arena';
-import { type AvatarLook, AvatarView } from './AvatarView';
+import { avatarsInUse, createAvatarBody } from './avatar/roster';
+import { AvatarView } from './AvatarView';
 import { BallMachineView } from './BallMachineView';
 import { type BallSpin, BallView, type TrailStyle } from './BallView';
 import { Effects, type ServeCue } from './Effects';
@@ -16,11 +17,6 @@ import { buildScenery, type Scenery, SKY } from './Scenery';
 
 /** 相机：近端身后偏上，俯视整张球台（WSR 视角）。调试面板可改。 */
 export const CAMERA = { y: -4.1, z: 2.75, lookY: 0.3, lookZ: -0.05, fov: 40 };
-
-const LOOKS: Record<Side, AvatarLook> = {
-  near: { shirt: 0x2f80ed, shorts: 0x1f2a3c, skin: 0xf1c9a5, hair: 0x3a2a1f, hairStyle: 'short' },
-  far: { shirt: 0xe2583e, shorts: 0x2b2d38, skin: 0xe0ac7e, hair: 0x2b1d14, hairStyle: 'bun' },
-};
 
 export const SIM_TO_THREE = new THREE.Quaternion().setFromAxisAngle(
   new THREE.Vector3(1, 0, 0),
@@ -90,9 +86,11 @@ export class Renderer {
     this.scenery = buildScenery(this.root, this.renderer.capabilities.getMaxAnisotropy());
     buildArena(this.root);
     this.ballView = new BallView(this.root);
+    // 近端的自己半透明（随时看得到球）
+    const who = avatarsInUse();
     this.avatars = {
-      near: new AvatarView(this.root, LOOKS.near, true),
-      far: new AvatarView(this.root, LOOKS.far, false),
+      near: new AvatarView(this.root, createAvatarBody(who.near, true)),
+      far: new AvatarView(this.root, createAvatarBody(who.far, false)),
     };
     this.machine = new BallMachineView(this.root);
     this.effects = new Effects(this.root);
