@@ -10,7 +10,7 @@ import { type Side, sideDir, TABLE } from '../constants';
 import type { ContactPlan } from '../hit/contactZone';
 import { rightSign, type Stroke } from '../players/PlayerSim';
 import {
-  POPUP_APEX,
+  popupApex,
   type ServeSpec,
   SMASH_RETURN_TAU,
   type ShotKind,
@@ -54,19 +54,18 @@ const BASE_SPEED: Record<ShotKind, number> = {
 const CPU_TIMING_TO_AIM = 0.8;
 
 /**
- * 回合越长越想「一板打死」：威胁加成（更容易被调动）、速度加成、角度更大、散布更大。
- * 避免两个强电脑无限对拉，也更像真人对打。
+ * 回合越长越想「一板打死」：速度加成、角度更大、散布更大（更容易出界），避免两个强电脑无限对拉，也更像真人对打。
+ * 2026-11-23 去掉了「回合越长越容易被调动成高球」：第 15 拍以后电脑三到六成的回球是慢悠悠的高球，
+ * 在 11 分制的快节奏里像进了慢动作。
  */
 function rallyPressure(rallyHits: number): {
-  threat: number;
   speed: number;
   marginScale: number;
   sigmaScale: number;
 } {
-  const over = Math.max(0, rallyHits - 6);
-  const aggression = clamp((rallyHits - 4) / 12, 0, 1);
+  // 第 16 拍后还继续加（到第 28 拍封顶）：不封顶得太早，两个电脑偶尔能对拉七八十拍
+  const aggression = clamp((rallyHits - 4) / 12, 0, 2);
   return {
-    threat: 0.03 * over,
     speed: 1 + 0.1 * aggression,
     marginScale: 1 - 0.4 * aggression,
     sigmaScale: 1 + 0.35 * aggression,
@@ -80,9 +79,13 @@ function rallyPressure(rallyHits: number): {
 const THREAT_SPEED_REF = 3.3;
 const THREAT_SPEED_SPAN = 2.2;
 
-/** 来球威胁（越大越难接好） */
-export function incomingThreat(contact: ContactPlan, smash: boolean): number {
-  const vin = Math.hypot(contact.v.x, contact.v.y);
+/**
+ * 来球威胁（越大越难接好）。球速按节奏换算：11 分制所有球都快 40%，这不该让电脑整体更容易被逼出高球
+ * （以前用绝对球速，11 分制里中级电脑 36% 的回球是高球，6 分制 12%；再加上回合越长越容易出高球，
+ * 第 15 拍以后三到六成是慢悠悠的高球，像慢动作）
+ */
+export function incomingThreat(contact: ContactPlan, smash: boolean, pace = 1): number {
+  const vin = Math.hypot(contact.v.x, contact.v.y) / pace;
   const win = Math.hypot(contact.w.x, contact.w.y, contact.w.z);
   return (
     (0.4 * (vin - THREAT_SPEED_REF)) / THREAT_SPEED_SPAN +
@@ -190,8 +193,7 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
   if (reachError > m.reachRushed) return { type: 'whiff', reason: 'reach' };
   if (info.smash && !rng.chance(lv.smashReturnP)) return { type: 'whiff', reason: 'smash' };
 
-  const pressure = rallyPressure(info.rallyHits);
-  const threat = incomingThreat(info.contact, info.smash) + pressure.threat;
+  const threat = incomingThreat(info.contact, info.smash, pace);
   const pRush = clamp(1.5 * (threat - lv.composure), 0, 0.6);
   const rushed =
     reachError > m.reachNormal ||
@@ -215,7 +217,7 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
         topspin: rng.uniform(-30, 30),
         sidespin: rng.uniform(-30, 30),
         clearance: 0.05,
-        apex: rng.uniform(POPUP_APEX.min, POPUP_APEX.max),
+        apex: popupApex(rng, pace),
         oops: true,
       },
     };

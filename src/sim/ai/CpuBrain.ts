@@ -72,9 +72,9 @@ export class CpuBrain {
       return;
     }
     this.plan = plan;
-    this.reactAt = replanning
-      ? Math.min(this.reactAt, host.t + this.lv.reaction * 0.5)
-      : host.t + this.lv.reaction;
+    // 反应时间跟着节奏缩放（11 分制的球快 40%，同样的反应时间就等于反应慢了 40%）
+    const reaction = this.lv.reaction / host.pace;
+    this.reactAt = replanning ? Math.min(this.reactAt, host.t + reaction * 0.5) : host.t + reaction;
     this.swingAt = plan.t + this.rng.normal(this.lv.timingMu, this.lv.timingSigma) / 1000;
     this.intent = null;
     this.nextNoiseAt = 0;

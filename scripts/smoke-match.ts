@@ -95,7 +95,10 @@ while (Date.now() - t0 < 240000) {
   // 回球
   if (s.awaiting && s.planT !== null && swungFor !== s.planT && s.t >= s.planT + 0.03) {
     swungFor = s.planT;
+    // 像真人一样拉上旋（按住 W）：时机分毫不差又不转的球，陪练级电脑几乎逼不出失误，一局打不完
+    await page.keyboard.down('w');
     await page.keyboard.press(s.stance === 'fh' ? 'f' : 'j');
+    await page.keyboard.up('w');
     if (!midShot && s.score.near + s.score.far >= 2) {
       midShot = true;
       await sleep(150);

@@ -183,7 +183,7 @@ export class MatchSim implements BrainHost {
       const isCpu = level !== undefined;
       const limits = isCpu
         ? this.cpuLimits(level)
-        : { ...(opts.humanLimits ?? DEFAULT_HUMAN_LIMITS) };
+        : this.paced(opts.humanLimits ?? DEFAULT_HUMAN_LIMITS);
       if (isCpu) this.brains[side] = new CpuBrain(side, level, this.rng);
       else {
         this.humans[side] = new HumanPlayer(side, this.rng, this.tune, this.windowMs, {
@@ -209,12 +209,21 @@ export class MatchSim implements BrainHost {
 
   private cpuLimits(level: number): MoverLimits {
     const lv = cpuLevel(level);
-    return {
+    return this.paced({
       vMax: lv.vMax,
       aMax: lv.aMax,
       gain: this.tune.mover.gain,
       yFactor: this.tune.mover.yFactor,
-    };
+    });
+  }
+
+  /**
+   * 走位限制跟着节奏缩放（速度 × pace、加速度 × pace²）：11 分制的球快 40%，要跑的距离没变，
+   * 不跟着快的话两边都更容易跑不到位（电脑回出「哎呀」高球、人够不着），11 分制就不只是「更快」而是另一个游戏
+   */
+  private paced(l: MoverLimits): MoverLimits {
+    const k = this.pace;
+    return { ...l, vMax: l.vMax * k, aMax: l.aMax * k * k };
   }
 
   /** 调参面板改了参数：刷新开局时算好的东西（人的判定窗口、电脑的走位限制） */

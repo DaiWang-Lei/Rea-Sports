@@ -11,6 +11,10 @@
  * 每分约 12–14 拍，有来有回；但防守弱（抗压阈值低），你打出快球、大角度、旋转时容易被逼出高球。
  * 以前它们每分只有 6–8 拍，你的得分八成以上是电脑白送的（自己下网、出界、无故回高球），没有挑战。
  * 高级 / 冠军不变：会抢攻，失误多是抢攻出界；防守强。
+ * 2026-11-23 去掉了「回合越长越容易被逼出高球」（长回合第 15 拍以后电脑三到六成是慢悠悠的高球，像慢动作），
+ * 来球威胁的球速也按节奏换算了，抗压阈值按「回球带上旋的真人」重新标定（玩家的旋转改成以刷球为主后，
+ * 八成回球带上旋，上旋计入威胁）：机器人（时机误差 70ms、刷球 25°±12°）对打时电脑的高球
+ * 6 分制入门约 12%、中级 7%、高级 5%、冠军 4%，11 分制高级约 10%、冠军 8%，不随回合长度变化。
  */
 
 export interface CpuLevel {
@@ -61,7 +65,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.05,
     predSigma: 0.12,
     feintP: 0,
-    composure: 0.12,
+    composure: 0.21,
     clearanceSigma: 0.012,
   },
   {
@@ -81,7 +85,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.15,
     predSigma: 0.1,
     feintP: 0,
-    composure: 0.18,
+    composure: 0.24,
     clearanceSigma: 0.014,
   },
   {
@@ -101,7 +105,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.3,
     predSigma: 0.08,
     feintP: 0.05,
-    composure: 0.25,
+    composure: 0.26,
     clearanceSigma: 0.016,
   },
   {
@@ -121,7 +125,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.45,
     predSigma: 0.07,
     feintP: 0.1,
-    composure: 0.45,
+    composure: 0.29,
     clearanceSigma: 0.02,
   },
   {
@@ -141,7 +145,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     smashReturnP: 0.6,
     predSigma: 0.06,
     feintP: 0.15,
-    composure: 0.6,
+    composure: 0.31,
     clearanceSigma: 0.014,
   },
 ];

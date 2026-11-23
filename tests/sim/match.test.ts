@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { fromMatchEvents, type RhythmEvent, rhythmSamples, summarize } from '@/rhythm/metrics';
+import { Rng } from '@/core/rng';
 import { MatchSim, type MatchEvent } from '@/sim/MatchSim';
+import { POPUP_APEX, popupApex } from '@/sim/shot/ShotSpec';
 
 function playOut(sim: MatchSim, maxTicks = 240 * 60 * 20): MatchEvent[] {
   const log: MatchEvent[] = [];
@@ -89,5 +91,37 @@ describe('节奏：对照 NSSR 实机视频', () => {
     const t = summarize(rhythmOf(3, 2).tossToServe).median;
     expect(t).toBeGreaterThan(0.9);
     expect(t).toBeLessThan(1.02);
+  });
+});
+
+describe('「哎呀」高球', () => {
+  it('长回合里不会变多（以前第 15 拍以后三到六成是高球，像慢动作）', () => {
+    let all = 0,
+      pops = 0,
+      late = 0,
+      latePops = 0;
+    for (let g = 0; g < 4; g++) {
+      const log = playOut(new MatchSim({ seed: 300 + g, points: 11, cpu: { near: 4, far: 4 } }));
+      for (const e of log) {
+        if (e.type !== 'hit' || e.serve) continue;
+        all++;
+        if (e.oops) pops++;
+        if (e.rallyHits >= 15) {
+          late++;
+          if (e.oops) latePops++;
+        }
+      }
+    }
+    expect(late).toBeGreaterThan(30);
+    expect(latePops / late).toBeLessThan((pops / all) * 1.5 + 0.05);
+  });
+
+  it('11 分制的高球低一些、飞得快一些', () => {
+    const rng = new Rng(1);
+    for (let i = 0; i < 20; i++) {
+      const a = popupApex(rng, 1.4);
+      expect(a).toBeLessThan(POPUP_APEX.max / 1.4 + 1e-9);
+      expect(a).toBeGreaterThanOrEqual(POPUP_APEX.min / 1.4 - 1e-9);
+    }
   });
 });

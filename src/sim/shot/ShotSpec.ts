@@ -3,6 +3,7 @@
  * 玩家（挥拍映射）和电脑（ShotPlanner）都产出 ShotSpec，走同一条路径。
  */
 import type { Tuning } from '@/config/tuning';
+import type { Rng } from '@/core/rng';
 import { type Vec3, vec3 } from '@/core/vec3';
 import { NET, TABLE, TABLE_CONTACT_Z } from '../constants';
 import {
@@ -46,10 +47,17 @@ export interface ShotSpec {
 }
 
 /**
- * 「哎呀」高球的顶点（台面以上，米）：落台后约弹到台面以上 0.6 米以上，一眼看得出是机会球。
+ * 「哎呀」高球的顶点（台面以上，米，6 分制）：落台后约弹到台面以上 0.6 米以上，一眼看得出是机会球。
  * 以前是 0.65–1.0，落台后只比普通球高 6 厘米左右，看不出来，玩家几乎从不扣杀。
  */
 export const POPUP_APEX = { min: 0.9, max: 1.3 };
+
+/**
+ * 这一个高球的顶点：节奏越快越低（11 分制普通球 0.4 秒就落台，高球还要飞 0.9 秒的话像进了慢动作）
+ */
+export function popupApex(rng: Rng, pace: number): number {
+  return rng.uniform(POPUP_APEX.min, POPUP_APEX.max) / Math.max(1, pace);
+}
 
 /**
  * 接扣杀时，时机偏差（归一化 τ）超过这么多就仓促回出高球（6 分制约 ±80ms）。
