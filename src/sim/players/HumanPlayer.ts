@@ -18,7 +18,7 @@ import { clamp, lerp } from '@/core/math';
 import type { Rng } from '@/core/rng';
 import { vec3 } from '@/core/vec3';
 import type { BallState } from '../ball/physics';
-import { type Side, sideDir, TABLE } from '../constants';
+import { type Side, sideDir, SIM_DT, TABLE } from '../constants';
 import { type ContactPlan, planContact } from '../hit/contactZone';
 import {
   HitResolver,
@@ -108,8 +108,8 @@ export class HumanPlayer {
   leniency: number;
   /** 当前来球的理想击球点 */
   plan: ContactPlan | null = null;
-  /** 这次抛球：理想发球时刻、球到最高点的时刻 */
-  serveAt: { ideal: number; apex: number } | null = null;
+  /** 这次抛球：理想发球时刻、球到最高点的时刻、最后还能击球的时刻 */
+  serveAt: { ideal: number; apex: number; last: number } | null = null;
   private incoming = { popup: false, smash: false };
   /** 本球的站位：来球时按落点相对「当时身体位置」定一次（同 FeederSim） */
   private ballStance: Stroke | null = null;
@@ -209,8 +209,8 @@ export class HumanPlayer {
     if (!(tApex > 0)) return false;
     this.tossFrom = NaN;
     const sv = host.tune.serve;
-    const { apex, ideal, at } = planToss(host.ball, now, host.tune);
-    this.serveAt = { ideal, apex };
+    const { apex, ideal, at, last } = planToss(host.ball, now, host.tune);
+    this.serveAt = { ideal, apex, last };
     // 早于「最高点前 0.1 秒」的挥拍忽略
     const earliest = (apex - sv.earliestBeforeApex - ideal) / (sv.windowMs / 1000);
     this.serveResolver.cfg = { ...this.serveResolver.cfg, tauIgnore: earliest, tauMin: earliest };
@@ -237,10 +237,12 @@ export class HumanPlayer {
     const serving = ph.kind === 'toss' && ph.server === this.side;
     const out = (serving ? this.serveResolver : this.resolver).onSwing(sw);
     if (out.type === 'ignore') return out;
-    // 发球在挥拍真正经过的时刻击球（球在哪就打在哪），不像回球那样等到理想时刻
+    // 发球在挥拍真正经过的时刻击球（球在哪就打在哪），不像回球那样等到理想时刻；
+    // 但不晚于球掉到重抛线之前的最后时刻（抛得高时球落得快，晚 70ms 就过线了，判中了却等不到执行）
     const pend = this.serveResolver.pending;
     if (serving && out.type === 'hit' && pend) {
-      pend.execAt = Math.max(sw.tContact, sw.tDetect);
+      const last = this.serveAt?.last ?? Infinity;
+      pend.execAt = Math.max(sw.tDetect, Math.min(sw.tContact, last - SIM_DT));
       out.execAt = pend.execAt;
     }
     const me = host.player(this.side);

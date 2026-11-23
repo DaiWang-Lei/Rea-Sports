@@ -9,6 +9,7 @@ import { REASON_TEXT } from '@/sim/rally/Referee';
 import { cpuPaddle, type PaddlePose } from '@/render/paddlePose';
 import { type RenderFrame, Renderer } from '@/render/Renderer';
 import { ballSpin, type TrailStyle } from '@/render/BallView';
+import type { ServeCue } from '@/render/Effects';
 import { Hud, type HudNames } from '@/ui/Hud';
 import { SIM_DT } from '@/sim/constants';
 
@@ -141,6 +142,7 @@ export class GameView {
           paddle: cpuPaddle(farBody, s.players.far, s.players.far.swing, t),
         },
       },
+      serveCue: this.serveCue(),
       shake: s.t < this.shakeUntil ? 0.02 : 0,
     };
     this.renderer.render(frame);
@@ -158,6 +160,19 @@ export class GameView {
       showScore,
       label
     );
+  }
+
+  /** 近端的人抛了球、还没发出去：最佳击球高度的提示圈（球是竖直抛的，圈就在球的正下方 / 正上方） */
+  private serveCue(): ServeCue | null {
+    const s = this.sim;
+    const ph = s.phase;
+    const at = s.human('near')?.serveAt;
+    if (ph.kind !== 'toss' || ph.server !== 'near' || !at) return null;
+    return {
+      p: { x: s.ball.p.x, y: s.ball.p.y, z: ph.handZ + s.tune.serve.sweetAboveHand },
+      ideal: at.ideal,
+      window: s.tune.serve.powerMs / 1000,
+    };
   }
 
   private onEvent(e: MatchEvent): void {

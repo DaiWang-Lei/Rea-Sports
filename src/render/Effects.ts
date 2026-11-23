@@ -1,6 +1,7 @@
 /**
  * 击球、落台的小特效：击球处扩散一个带短线的圆环（扣杀、强力发球是金色、更大），
- * 落台处在台面上闪一圈（帮助看清落点）。坐标用仿真坐标（Z 向上），挂在 root 下。
+ * 落台处在台面上闪一圈（帮助看清落点）；人发球时在最佳击球高度显示一个提示圈。
+ * 坐标用仿真坐标（Z 向上），挂在 root 下。
  */
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
@@ -36,11 +37,21 @@ function burstTexture(): THREE.Texture {
 
 const easeOut = (u: number) => 1 - (1 - u) * (1 - u);
 
+/** 发球的最佳击球点提示 */
+export interface ServeCue {
+  p: Vec3;
+  ideal: number;
+  window: number;
+}
+
 export class Effects {
   private readonly hits: Array<{ sprite: THREE.Sprite; t0: number; strong: boolean }> = [];
   private readonly bounces: Array<{ mesh: THREE.Mesh; t0: number }> = [];
   private nextHit = 0;
   private nextBounce = 0;
+  private readonly cue: THREE.Mesh;
+  private readonly cueMat: THREE.MeshBasicMaterial;
+  private cueSince = NaN;
 
   constructor(root: THREE.Object3D) {
     const map = burstTexture();
@@ -62,6 +73,45 @@ export class Effects {
       root.add(mesh);
       this.bounces.push({ mesh, t0: -Infinity });
     }
+
+    // 发球提示圈：水平放在最佳击球高度，球落进圈里时挥拍；始终画在最上层（半透明的自己挡在前面也看得到）
+    this.cueMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.cue = new THREE.Mesh(new THREE.RingGeometry(0.07, 0.085, 48), this.cueMat);
+    this.cue.renderOrder = 21;
+    this.cue.visible = false;
+    root.add(this.cue);
+  }
+
+  /**
+   * 发球提示圈：抛球后淡入；球进入强力发球的时间窗（理想时刻 ±window）时变成金色、稍大；之后很快淡出。
+   * cue = null 时不显示
+   */
+  serveCue(cue: ServeCue | null, t: number): void {
+    if (!cue) {
+      this.cue.visible = false;
+      this.cueSince = NaN;
+      return;
+    }
+    if (Number.isNaN(this.cueSince)) this.cueSince = t;
+    const late = t - (cue.ideal + cue.window);
+    if (late > 0.25) {
+      this.cue.visible = false;
+      return;
+    }
+    this.cue.visible = true;
+    this.cue.position.set(cue.p.x, cue.p.y, cue.p.z);
+    const inWindow = Math.abs(t - cue.ideal) <= cue.window;
+    this.cueMat.color.set(inWindow ? 0xffd166 : 0xffffff);
+    const fadeIn = Math.min(1, (t - this.cueSince) / 0.25);
+    const fadeOut = late > 0 ? 1 - late / 0.25 : 1;
+    this.cueMat.opacity = (inWindow ? 0.95 : 0.45) * fadeIn * fadeOut;
+    this.cue.scale.setScalar(inWindow ? 1.15 : 1);
   }
 
   hit(p: Vec3, strong: boolean, t: number): void {

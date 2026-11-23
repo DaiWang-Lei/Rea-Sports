@@ -10,7 +10,7 @@ import { buildArena } from './Arena';
 import { type AvatarLook, AvatarView } from './AvatarView';
 import { BallMachineView } from './BallMachineView';
 import { type BallSpin, BallView, type TrailStyle } from './BallView';
-import { Effects } from './Effects';
+import { Effects, type ServeCue } from './Effects';
 import type { PaddlePose } from './paddlePose';
 import { buildScenery, type Scenery, SKY } from './Scenery';
 
@@ -52,6 +52,8 @@ export interface RenderFrame {
   machine?: Vec3;
   /** 多球训练时回出去、还在飞的球 */
   extraBalls?: Vec3[];
+  /** 人发球时的最佳击球点提示：圈的位置、理想击球时刻、强力发球的半窗口（秒） */
+  serveCue?: ServeCue | null;
   /** 震屏：剩余强度（米） */
   shake: number;
 }
@@ -140,6 +142,7 @@ export class Renderer {
     );
     this.scenery.update(frame.t);
     this.effects.update(frame.t);
+    this.effects.serveCue(frame.serveCue ?? null, frame.t);
     // 球靠近自己时，自己再透明一些
     const near = frame.players.near.body;
     const dNear = Math.hypot(frame.ball.x - near.x, frame.ball.y - near.y);
