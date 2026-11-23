@@ -39,12 +39,16 @@ export interface IncomingInfo {
   rallyHits: number;
 }
 
-/** 各类回球的基础水平速度（米/秒，再乘难度倍率与节奏 pace） */
+/**
+ * 各类回球的基础水平速度（米/秒，再乘难度倍率与节奏 pace）。
+ * 击球点在台后约 0.5 米（WSR 那样退后接球），每板飞得比贴着台端打远约 0.3 米，球速相应快一些，
+ * 击球到落台仍约 0.57 秒（NSSR 实测）
+ */
 const BASE_SPEED: Record<ShotKind, number> = {
-  normal: 5.0,
-  drive: 6.8,
-  cut: 4.4,
-  curve: 5.4,
+  normal: 5.4,
+  drive: 7.3,
+  cut: 4.75,
+  curve: 5.8,
   smash: 10,
   popup: 4.0,
   serve: 6.0,
@@ -82,18 +86,23 @@ const THREAT_SPEED_SPAN = 2.2;
 /**
  * 来球威胁（越大越难接好）。球速按节奏换算：11 分制所有球都快 40%，这不该让电脑整体更容易被逼出高球
  * （以前用绝对球速，11 分制里中级电脑 36% 的回球是高球，6 分制 12%；再加上回合越长越容易出高球，
- * 第 15 拍以后三到六成是慢悠悠的高球，像慢动作）
+ * 第 15 拍以后三到六成是慢悠悠的高球，像慢动作）。
+ * 速度只算朝自己飞来的前后分量：斜线球为了节奏不变打得更快，多出来的是横向速度，人跑过去就行
  */
 export function incomingThreat(contact: ContactPlan, smash: boolean, pace = 1): number {
-  const vin = Math.hypot(contact.v.x, contact.v.y) / pace;
+  const vin = Math.abs(contact.v.y) / pace;
   const win = Math.hypot(contact.w.x, contact.w.y, contact.w.z);
   return (
     (0.4 * (vin - THREAT_SPEED_REF)) / THREAT_SPEED_SPAN +
     (0.3 * win) / 250 +
-    (0.2 * Math.abs(contact.p.x)) / TABLE.halfWidth +
+    // 跑出边线去接不额外加威胁（人会跑过去）：按台边封顶
+    0.2 * Math.min(1, Math.abs(contact.p.x) / TABLE.halfWidth) +
     (smash ? 0.5 : 0)
   );
 }
+
+/** 从台边一侧击球时打大角度斜线的比例 */
+const CROSS_COURT = 0.7;
 
 /** 来球的上旋分量（正 = 上旋）相对接球方前进方向而言 */
 function incomingTopspin(contact: ContactPlan): number {
@@ -111,9 +120,13 @@ export function chooseIntent(info: IncomingInfo, lv: CpuLevel, rng: Rng): ShotIn
   const sigma = lv.landingSigma * pressure.sigmaScale;
   const xMax = TABLE.halfWidth - margin;
 
-  // 打向对手站位的另一侧
+  // 左右：常打大角度斜线——从自己击球的一侧打到对面另一侧的边线附近，球落台后带着横向速度往台外飞，
+  // 对手得跑出边线去接（WSR 里很常见）；其余打向对手站位的另一侧，或者随便打
+  const myX = info.contact.p.x;
   let x: number;
-  if (rng.chance(0.65)) {
+  if (Math.abs(myX) > 0.2 && rng.chance(CROSS_COURT)) {
+    x = -Math.sign(myX) * rng.uniform(0.5 * xMax, 0.9 * xMax);
+  } else if (rng.chance(0.65)) {
     const away = info.oppX > 0 ? -1 : 1;
     x = away * rng.uniform(0.2, xMax);
   } else {
@@ -242,13 +255,18 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
     };
   }
 
+  // 斜线比直线远，多出来的横向距离不该拖慢节奏：前后方向的速度和直线球一样
+  const target = { x: intent.target.x + dxWorld, y: intent.target.y };
+  const c = info.contact.p;
+  const along = Math.abs(target.y - c.y);
+  const slant = along > 0.5 ? Math.hypot(target.x - c.x, target.y - c.y) / along : 1;
   return {
     type: 'hit',
     rushed: false,
     spec: {
       kind: intent.kind,
-      target: { x: intent.target.x + dxWorld, y: intent.target.y },
-      speedH: BASE_SPEED[intent.kind] * intent.speedMul * pace,
+      target,
+      speedH: BASE_SPEED[intent.kind] * intent.speedMul * pace * slant,
       topspin: intent.topspin,
       sidespin: intent.sidespin,
       clearance: intent.clearance,

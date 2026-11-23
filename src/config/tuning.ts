@@ -93,10 +93,13 @@ export function defaultTuning() {
       powerSpeedMul: 1.3,
     },
     contact: {
-      /** 理想击球点：台面以上高度、离台端的位置 */
+      /** 理想击球点：台面以上高度、离球台中心的前后距离（台端在 1.37） */
       idealHeight: 0.22,
-      idealHeightPopup: 0.55,
-      idealY: 1.62,
+      idealHeightPopup: 0.4,
+      idealY: 1.9,
+      /** 接高球、接扣杀时退到台后更远处（WSR 里接高球、防扣杀都退得很远） */
+      idealYPopup: 2.4,
+      idealYSmash: 2.9,
       /** 弹台后多久才算进入击球区（秒） */
       minAfterBounce: 0.06,
       /** 预测轨迹的最长时间（秒） */

@@ -1,6 +1,7 @@
 /**
  * 理想击球点：对方击球后，预测轨迹，找到球在接球方半台弹起之后、最适合击球的那一刻。
- * 代价函数 J = ((z − z*)/0.12)² + ((y − y*)/0.30)²，z* 为台面以上 0.22m（高球 0.55m），y* 为台端外 1.62m。
+ * 代价函数 J = ((z − z*)/0.12)² + ((y − y*)/0.30)²，z* 为台面以上 0.22m（高球 0.55m），
+ * y* 离球台中心 1.62m（台端外 0.25m）；接高球、接扣杀时 y* 更远（退到台后接，像 WSR）。
  * 只在下降段（过了弹起后的最高点）里找：不加限制时，慢的高球会在「弹起后约 100ms 的上升段」和
  * 「约 500ms 的下降段」之间跳（入门 18%、进阶 44%、高手 65% 的球选到上升段），而真人基本在最高点之后击球。
  * 下降段里没有候选（预测太短）时才退回到整段。
@@ -32,7 +33,8 @@ export function planContact(
   now: number,
   receiver: Side,
   popup: boolean,
-  tune: Tuning
+  tune: Tuning,
+  smash = false
 ): ContactPlan {
   const c = tune.contact;
   const pred = predict(ball, now, c.predictHorizon, tune.physics, 4);
@@ -70,7 +72,7 @@ export function planContact(
   if (bounceIdx < 0) return fail();
 
   const zStar = TABLE.height + (popup ? c.idealHeightPopup : c.idealHeight);
-  const yStar = -sideDir(receiver) * c.idealY;
+  const yStar = -sideDir(receiver) * (smash ? c.idealYSmash : popup ? c.idealYPopup : c.idealY);
   const startI = Math.ceil((bounceT + c.minAfterBounce - now) / SIM_DT);
   const search = (descendingOnly: boolean): number => {
     let best = -1;

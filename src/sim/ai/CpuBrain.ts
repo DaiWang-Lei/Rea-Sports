@@ -64,7 +64,7 @@ export class CpuBrain {
 
   /** 球正朝我飞来（对方击球后；或发球已在对方半台落台），规划接球。重复调用 = 重新规划（如擦网后） */
   onIncoming(host: BrainHost, popup: boolean, smash: boolean): void {
-    const plan = planContact(host.ball, host.t, this.side, popup, host.tune);
+    const plan = planContact(host.ball, host.t, this.side, popup, host.tune, smash);
     this.incoming = { popup, smash };
     const replanning = this.plan !== null;
     if (!plan.ok) {

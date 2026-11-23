@@ -158,7 +158,7 @@ export class HumanPlayer {
 
   /** 球正朝我飞来（对方击球后；或发球已在对方半台落台）。重复调用 = 轨迹变了（擦网等），重新规划 */
   onIncoming(host: HumanHost, popup: boolean, smash: boolean): void {
-    const plan = planContact(host.ball, host.t, this.side, popup, host.tune);
+    const plan = planContact(host.ball, host.t, this.side, popup, host.tune, smash);
     this.incoming = { popup, smash };
     if (!plan.ok) {
       // 这球不会落到我这边（出界 / 下网）：不用接

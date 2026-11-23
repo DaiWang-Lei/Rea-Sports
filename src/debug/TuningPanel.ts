@@ -78,7 +78,9 @@ const GROUPS: Array<[string, string, Record<string, number>, Spec[]]> = [
     [
       ['idealHeight', '理想高度（台面上 m）', 0, 0.6, 0.01],
       ['idealHeightPopup', '高球理想高度（m）', 0.2, 1.2, 0.01],
-      ['idealY', '离台端（m）', 1.3, 2.4, 0.01],
+      ['idealY', '离球台中心（m）', 1.3, 2.6, 0.01],
+      ['idealYPopup', '接高球离中心（m）', 1.3, 3.2, 0.01],
+      ['idealYSmash', '接扣杀离中心（m）', 1.3, 3.5, 0.01],
       ['minAfterBounce', '弹起后最早（s）', 0, 0.3, 0.005],
     ],
   ],
