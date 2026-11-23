@@ -114,6 +114,12 @@ export class Renderer {
     this.effects.hit(p, strong, this.lastT);
   }
 
+  /** 每分结束：得分的一方挥拳跳起，失分的一方低头（赢下整局时庆祝得久一点） */
+  pointReaction(winner: Side, gameOver = false): void {
+    this.avatars[winner].react('win', gameOver ? 3 : 1.6);
+    this.avatars[winner === 'near' ? 'far' : 'near'].react('lose', gameOver ? 3 : 1.6);
+  }
+
   /** 落台特效 */
   bounceEffect(p: Vec3): void {
     this.effects.bounce(p, this.lastT);
@@ -131,7 +137,14 @@ export class Renderer {
       const rp = frame.players[side];
       this.avatars[side].group.visible = !!rp;
       if (rp)
-        this.avatars[side].update(rp.body, sideDir(side), forehandSign(rp.player), rp.paddle, dt);
+        this.avatars[side].update(
+          rp.body,
+          sideDir(side),
+          forehandSign(rp.player),
+          rp.paddle,
+          dt,
+          frame.ballVisible ? frame.ball : null
+        );
     }
     this.machine.update(frame.machine ?? null);
     const extras = frame.extraBalls ?? [];

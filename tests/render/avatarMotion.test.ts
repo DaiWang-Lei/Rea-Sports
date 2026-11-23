@@ -44,8 +44,8 @@ describe('人物动作（和模型无关）', () => {
     expect(pose.spine.roll).toBeGreaterThan(0.3);
     expect(pose.pelvis.drop).toBeGreaterThan(0.1);
     const [left, right] = pose.feet;
-    expect(right.x).toBeGreaterThan(0.15 + 0.1);
-    expect(left.x).toBeCloseTo(-0.15, 2);
+    expect(right.x).toBeGreaterThan(0.18 + 0.1);
+    expect(left.x).toBeCloseTo(-0.18, 2);
   });
 
   it('脚踩在地上；远端（朝 −y）左右镜像', () => {
@@ -79,5 +79,89 @@ describe('人物动作（和模型无关）', () => {
     // 远端的右手在世界 −x：同样的准备位置，上身也不转
     expect(far.paddleSide).toBe(1);
     expect(Math.abs(far.spine.yaw)).toBeLessThan(0.05);
+  });
+
+  it('脚踩实了不滑：身体挪 5 厘米，两只脚都不动', () => {
+    const m = new AvatarMotion();
+    const p = (x: number) => ({
+      pos: { x: x + 0.28, y: -2 + 0.42, z: 0.95 },
+      normal: { x: 0, y: 1, z: 0 },
+      handle: { x: 0, y: -0.3, z: -1 },
+    });
+    let pose = m.update({ x: 0, y: -2 }, 1, 1, p(0), 1 / 60);
+    for (let i = 0; i < 20; i++) pose = m.update({ x: 0, y: -2 }, 1, 1, p(0), 1 / 60);
+    const before = pose.feet.map((f) => ({ ...f }));
+    for (let i = 1; i <= 10; i++)
+      pose = m.update({ x: 0.005 * i, y: -2 }, 1, 1, p(0.005 * i), 1 / 60);
+    for (let i = 0; i < 20; i++) pose = m.update({ x: 0.05, y: -2 }, 1, 1, p(0.05), 1 / 60);
+    pose.feet.forEach((f, i) => {
+      expect(f.x).toBeCloseTo(before[i].x, 3);
+      expect(f.y).toBeCloseTo(before[i].y, 3);
+    });
+  });
+
+  it('横向跑动：两只脚轮流迈（不同时离地），跑完脚跟上身体', () => {
+    const m = new AvatarMotion();
+    const p = (x: number) => ({
+      pos: { x: x + 0.28, y: -2 + 0.42, z: 0.95 },
+      normal: { x: 0, y: 1, z: 0 },
+      handle: { x: 0, y: -0.3, z: -1 },
+    });
+    let pose = m.update({ x: 0, y: -2 }, 1, 1, p(0), 1 / 60);
+    let both = 0,
+      steps = 0,
+      wasUp = [false, false];
+    for (let i = 1; i <= 36; i++) {
+      const x = Math.min(0.8, i * (1.5 / 60));
+      pose = m.update({ x, y: -2 }, 1, 1, p(x), 1 / 60);
+      const up = pose.feet.map((f) => f.z > 0.051);
+      if (up[0] && up[1]) both++;
+      up.forEach((u, k) => {
+        if (u && !wasUp[k]) steps++;
+      });
+      wasUp = up;
+    }
+    for (let i = 0; i < 40; i++) pose = m.update({ x: 0.8, y: -2 }, 1, 1, p(0.8), 1 / 60);
+    expect(steps).toBeGreaterThanOrEqual(4);
+    expect(both).toBe(0);
+    expect(pose.feet[0].x).toBeCloseTo(0.8 - 0.18, 1);
+    expect(pose.feet[1].x).toBeCloseTo(0.8 + 0.18, 1);
+  });
+
+  it('头跟着球：球在左前方就往左转；球不在场上看前方', () => {
+    const m = new AvatarMotion();
+    const pp = paddleAt(0.28, 0.42);
+    const body = { x: 0, y: -2 };
+    const pad = { ...pp, pos: { x: 0.28, y: -2 + 0.42, z: 0.95 } };
+    let pose = m.update(body, 1, 1, pad, 1 / 60, { x: -1, y: -0.5, z: 1 });
+    for (let i = 0; i < 30; i++) pose = m.update(body, 1, 1, pad, 1 / 60, { x: -1, y: -0.5, z: 1 });
+    expect(pose.head.yaw).toBeGreaterThan(0.3);
+    for (let i = 0; i < 30; i++) pose = m.update(body, 1, 1, pad, 1 / 60, null);
+    expect(Math.abs(pose.head.yaw)).toBeLessThan(0.05);
+  });
+
+  it('得分举拳跳起，失分低头', () => {
+    const body = { x: 0, y: -2 };
+    const pad = { ...paddleAt(0.28, 0.42), pos: { x: 0.28, y: -2 + 0.42, z: 0.95 } };
+    const w = new AvatarMotion();
+    w.update(body, 1, 1, pad, 1 / 60);
+    w.react('win');
+    let top = 0,
+      pose = w.update(body, 1, 1, pad, 1 / 60);
+    for (let i = 0; i < 40; i++) {
+      pose = w.update(body, 1, 1, pad, 1 / 60);
+      top = Math.max(top, pose.feet[0].z);
+    }
+    expect(pose.freeHand.upper.z).toBeGreaterThan(0.5);
+    expect(top).toBeGreaterThan(0.12);
+    const l = new AvatarMotion();
+    l.update(body, 1, 1, pad, 1 / 60);
+    l.react('lose');
+    for (let i = 0; i < 40; i++) pose = l.update(body, 1, 1, pad, 1 / 60);
+    expect(pose.head.pitch).toBeGreaterThan(0.3);
+    expect(pose.spine.pitch).toBeGreaterThan(0.35);
+    // 反应过后恢复
+    for (let i = 0; i < 120; i++) pose = l.update(body, 1, 1, pad, 1 / 60);
+    expect(pose.head.pitch).toBeLessThan(0.15);
   });
 });

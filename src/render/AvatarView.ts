@@ -5,7 +5,7 @@
  */
 import type * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
-import { AvatarMotion } from './avatar/motion';
+import { AvatarMotion, type AvatarReaction } from './avatar/motion';
 import { ProceduralBody } from './avatar/ProceduralBody';
 import type { AvatarBody, AvatarLook } from './avatar/types';
 import type { PaddlePose } from './paddlePose';
@@ -36,14 +36,21 @@ export class AvatarView {
     this.body.setFade(extra);
   }
 
+  /** 得失分反应：得分的挥拳跳起，失分的低头 */
+  react(kind: AvatarReaction, dur?: number): void {
+    this.motion.react(kind, dur);
+  }
+
   update(
     body: { x: number; y: number },
     facing: 1 | -1,
     shoulderSide: number,
     paddle: PaddlePose,
-    dt: number
+    dt: number,
+    /** 球的位置（头跟着球转；不在场上时 null） */
+    ball: Vec3 | null = null
   ): void {
-    const pose = this.motion.update(body, facing, shoulderSide, paddle, dt);
+    const pose = this.motion.update(body, facing, shoulderSide, paddle, dt, ball);
     this.body.apply(pose);
     this.paddlePos = pose.paddle.pos;
   }

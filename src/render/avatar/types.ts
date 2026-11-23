@@ -35,7 +35,7 @@ export interface AvatarPose {
   pelvis: { drop: number; shift: number; pitch: number; roll: number; yaw: number };
   /** 腰以上相对骨盆的旋转：前倾（pitch，正 = 往前）、侧倾（roll，正 = 往右）、扭转（yaw，正 = 往左转） */
   spine: { pitch: number; roll: number; yaw: number };
-  /** 头相对胸的转动（看球） */
+  /** 头相对胸的转动（看球、得失分时抬头 / 低头）：yaw 正 = 往左转，pitch 正 = 低头 */
   head: { yaw: number; pitch: number };
   /** 球拍：拍面中心、朝向（四元数，局部 Y = 红面法向，局部 −Z = 拍柄方向） */
   paddle: { pos: Vec3; quat: { x: number; y: number; z: number; w: number } };
