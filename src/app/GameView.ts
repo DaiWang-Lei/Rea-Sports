@@ -11,6 +11,7 @@ import { type RenderFrame, Renderer } from '@/render/Renderer';
 import { ballSpin, type TrailStyle } from '@/render/BallView';
 import type { ServeCue } from '@/render/Effects';
 import { Hud, type HudNames } from '@/ui/Hud';
+import { CROWD_GAIN, loadCrowdVolume } from './shared/crowdVolume';
 import { SIM_DT } from '@/sim/constants';
 
 interface Snapshot {
@@ -23,13 +24,19 @@ export interface GameViewOptions {
   names: HudNames;
   /** 回合中也显示比分（自动演示用）；正式比赛按 WSR 只在两分之间显示 */
   alwaysShowScore?: boolean;
-  /** 自定义近端球拍（玩家的 1:1 球拍）；不传则按电脑动画 */
+  /** 自定义近端 / 远端球拍（玩家的 1:1 球拍）；不传则按电脑动画 */
   nearPaddle?: (t: number, body: { x: number; y: number }) => PaddlePose;
+  farPaddle?: (t: number, body: { x: number; y: number }) => PaddlePose;
+  /** 双人分屏（左近端、右远端） */
+  split?: boolean;
   onEvent?: (e: MatchEvent) => void;
 }
 
-/** 观众声的音量：平时的低语、激动到顶时的欢呼层、全场安静后击球声的回声比例 */
-const CROWD = { calm: 0.22, excited: 0.55, echo: 0.4 };
+/**
+ * 观众声的音量：平时的低语、激动到顶时的欢呼层、全场安静后击球声的回声比例。
+ * 低语一直在响，太大了像一层底噪（2026-11-24 从 0.22 减半）；整体再乘玩家设置的观众声大 / 小 / 关
+ */
+const CROWD = { calm: 0.11, excited: 0.55, echo: 0.4 };
 
 export class GameView {
   readonly renderer: Renderer;
@@ -44,28 +51,42 @@ export class GameView {
   private prev: Snapshot;
   private shakeUntil = 0;
   private trail: TrailStyle = 'normal';
+  private crowdOn = false;
 
   constructor(
     container: HTMLElement,
     sim: MatchSim,
-    private readonly opts: GameViewOptions
+    private opts: GameViewOptions
   ) {
     const canvas = document.createElement('canvas');
     canvas.className = 'game-canvas';
     container.appendChild(canvas);
     this.renderer = new Renderer(canvas);
+    this.renderer.setSplit(!!opts.split);
     this.names = opts.names;
     this.hud = new Hud(container, opts.names);
     this.sim = sim;
     this.prev = this.snapshot();
     this.sfx.setCrowd(CROWD.calm, 0);
+    this.sfx.setCrowdLevel(CROWD_GAIN[loadCrowdVolume()]);
   }
 
+  /** 换一套选项（对打里切换 1 人 / 2 人时共用同一个画面） */
+  configure(opts: GameViewOptions): void {
+    this.opts = opts;
+    this.renderer.setSplit(!!opts.split);
+    this.setNames(opts.names);
+  }
+
+  /** 换上新的一局：观众回到平时的低语（上一局可能停在长回合的屏息里） */
   setSim(sim: MatchSim): void {
     this.sim = sim;
     this.acc = 0;
     this.prev = this.snapshot();
     this.hud.clearFlash();
+    this.sfx.setEcho(0);
+    this.sfx.setCrowd(CROWD.calm, 0);
+    this.renderer.crowd.mood(0);
   }
 
   setNames(names: HudNames): void {
@@ -102,6 +123,11 @@ export class GameView {
     }
     if (steps === 12) this.acc = 0;
     for (const e of this.sim.drainEvents()) this.onEvent(e);
+    // 循环的观众声只在打球时放：连接、选对手、暂停、结算时淡出
+    if (this.paused === this.crowdOn) {
+      this.crowdOn = !this.paused;
+      this.sfx.setCrowdOn(this.crowdOn);
+    }
     this.draw(this.acc / SIM_DT);
   }
 
@@ -143,7 +169,9 @@ export class GameView {
         far: {
           player: s.players.far,
           body: farBody,
-          paddle: cpuPaddle(farBody, s.players.far, s.players.far.swing, t),
+          paddle: this.opts.farPaddle
+            ? this.opts.farPaddle(t, farBody)
+            : cpuPaddle(farBody, s.players.far, s.players.far.swing, t),
         },
       },
       serveCue: this.serveCue(),
@@ -188,12 +216,13 @@ export class GameView {
     }
   }
 
-  /** 近端的人抛了球、还没发出去：最佳击球高度的提示圈（球是竖直抛的，圈就在球的正下方 / 正上方） */
+  /** 人抛了球、还没发出去：最佳击球高度的提示圈（球是竖直抛的，圈就在球的正下方 / 正上方） */
   private serveCue(): ServeCue | null {
     const s = this.sim;
     const ph = s.phase;
-    const at = s.human('near')?.serveAt;
-    if (ph.kind !== 'toss' || ph.server !== 'near' || !at) return null;
+    if (ph.kind !== 'toss') return null;
+    const at = s.human(ph.server)?.serveAt;
+    if (!at) return null;
     return {
       p: { x: s.ball.p.x, y: s.ball.p.y, z: ph.handZ + s.tune.serve.sweetAboveHand },
       ideal: at.ideal,
@@ -235,11 +264,13 @@ export class GameView {
         this.renderer.crowd.cheer(e.rallyHits >= 8 ? 1 : 0.4);
         this.renderer.pointReaction(e.winner);
         const who = e.winner === 'near' ? this.names.near : this.names.far;
+        // 和电脑打：你得分绿、电脑得分红；两个人打：谁得分都是绿
+        const versus = !!(this.sim.humans.near && this.sim.humans.far);
         this.hud.flash(
           REASON_TEXT[e.reason],
           `${who}得分`,
           1.8,
-          e.winner === 'near' ? 'good' : 'bad'
+          e.winner === 'near' || versus ? 'good' : 'bad'
         );
         break;
       }

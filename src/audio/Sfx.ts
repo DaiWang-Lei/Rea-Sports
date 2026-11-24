@@ -4,8 +4,9 @@
  *  - 击球、落台、落地：每种几下不同的录音（拼在一个 WAV 里，每格 SLOT 秒，撞击在每格开头 1ms 处，不会比画面晚），
  *    随机挑一下（不连着重复同一下），音高随机偏 ±3%，力度控制音量；
  *  - 球网：落台的录音放慢、滤掉高频，闷一点；
- *  - 观众：两层一直循环的人声（平时的低语、激动的欢呼），由 setCrowd 调两层的音量；
- *    外加得分欢呼、长回合得分的大欢呼、回合打长了的一声「哦——」。
+ *  - 观众：两层循环的人声（平时的低语、激动的欢呼），由 setCrowd 调两层的音量，只在打球时放（setCrowdOn）；
+ *    低语滤掉高频，听着远一点、不像底噪。外加得分欢呼、长回合得分的大欢呼、回合打长了的一声「哦——」。
+ *    所有观众声走同一路总音量（setCrowdLevel，玩家设置的大 / 小 / 关）。
  * 浏览器要求用户点击后才能出声：第一次交互时调用 unlock()。素材在创建时就开始下载，解锁后解码。
  */
 import { clamp } from '@/core/math';
@@ -36,6 +37,9 @@ type SampleName = keyof typeof FILES;
 /** 一直循环的观众声 */
 const BEDS = ['murmur', 'excited'] as const;
 type Bed = (typeof BEDS)[number];
+
+/** 低语滤掉这个频率以上（Hz）：素材是远处大群人的录音，高频的说话声留着就像一层沙沙的底噪 */
+const MURMUR_LOWPASS = 1100;
 
 /** 撞击素材里有几下 */
 const SLOTS: Partial<Record<SampleName, number>> = { paddle: 6, table: 6, floor: 3 };
@@ -68,6 +72,12 @@ export class Sfx {
   /** 两层循环观众声的音量节点；还没解码完时只记目标音量 */
   private readonly beds: Partial<Record<Bed, GainNode>> = {};
   private readonly bedTarget: Record<Bed, number> = { murmur: 0, excited: 0 };
+  /** 所有观众声的总音量（玩家设置） */
+  private crowdBus: GainNode | null = null;
+  private crowdLevel = 1;
+  /** 循环观众声的开关（只在打球时开） */
+  private bedGate: GainNode | null = null;
+  private bedsOn = false;
   enabled = true;
 
   constructor() {
@@ -92,6 +102,12 @@ export class Sfx {
     this.reverbGain = ctx.createGain();
     this.reverbGain.gain.value = 0;
     this.reverb.connect(this.reverbGain).connect(this.master);
+    this.crowdBus = ctx.createGain();
+    this.crowdBus.gain.value = this.crowdLevel;
+    this.crowdBus.connect(this.master);
+    this.bedGate = ctx.createGain();
+    this.bedGate.gain.value = this.bedsOn ? 1 : 0;
+    this.bedGate.connect(this.crowdBus);
     this.decoding = this.decode(ctx);
   }
 
@@ -118,6 +134,20 @@ export class Sfx {
     const t = this.ctx.currentTime;
     this.beds.murmur?.gain.setTargetAtTime(murmur, t, tau);
     this.beds.excited?.gain.setTargetAtTime(excited, t, tau);
+  }
+
+  /** 所有观众声的总音量（0 = 关） */
+  setCrowdLevel(level: number): void {
+    this.crowdLevel = level;
+    if (this.crowdBus && this.ctx)
+      this.crowdBus.gain.setTargetAtTime(level, this.ctx.currentTime, 0.1);
+  }
+
+  /** 循环观众声开 / 关（打球时开，连接、选对手、暂停、结算时关），淡入淡出 */
+  setCrowdOn(on: boolean, tau = 0.6): void {
+    this.bedsOn = on;
+    if (this.bedGate && this.ctx)
+      this.bedGate.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, tau);
   }
 
   /** 击球：力度 q ∈ [0,1]；pan ∈ [−1,1]；扣杀 / 强力发球更响、音调稍低更「实」 */
@@ -149,9 +179,9 @@ export class Sfx {
   /** 观众：得分欢呼（amount ≥ 1 是长回合 / 赢下比赛的大欢呼），或回合打长了的一声「哦——」 */
   crowd(kind: 'cheer' | 'ooh', amount = 1): void {
     if (!this.ready) return;
-    if (kind === 'ooh') this.play('ooh', 0.4, 1, this.master!);
-    else if (amount >= 1) this.play('cheerBig', 0.45, 1, this.master!);
-    else this.play('cheer', 0.4 * amount + 0.1, 1, this.master!);
+    if (kind === 'ooh') this.play('ooh', 0.4, 1, this.crowdBus!);
+    else if (amount >= 1) this.play('cheerBig', 0.45, 1, this.crowdBus!);
+    else this.play('cheer', 0.4 * amount + 0.1, 1, this.crowdBus!);
   }
 
   /** 提示音（菜单、计时） */
@@ -185,7 +215,7 @@ export class Sfx {
     this.startBeds(ctx);
   }
 
-  /** 循环观众声：解码完就一直放（音量按 setCrowd 的目标，默认 0 = 听不到），各自从随机位置开始 */
+  /** 循环观众声：解码完就一直放（音量按 setCrowd 的目标，默认 0 = 听不到；不打球时被 setCrowdOn 关掉），各自从随机位置开始 */
   private startBeds(ctx: BaseAudioContext): void {
     for (const name of BEDS) {
       const buf = this.buffers[name];
@@ -195,7 +225,15 @@ export class Sfx {
       src.loop = true;
       const g = ctx.createGain();
       g.gain.value = this.bedTarget[name];
-      src.connect(g).connect(this.master!);
+      src.connect(g);
+      if (name === 'murmur') {
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = MURMUR_LOWPASS;
+        g.connect(lp).connect(this.bedGate!);
+      } else {
+        g.connect(this.bedGate!);
+      }
       src.start(ctx.currentTime, Math.random() * buf.duration);
       this.beds[name] = g;
     }

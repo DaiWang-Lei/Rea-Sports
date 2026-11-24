@@ -20,9 +20,11 @@ const TIERS = [
   { rIn: 7.8, rOut: 8.6, h: 0.25 },
   { rIn: 8.6, rOut: 9.4, h: 0.4 },
 ];
-/** 看台覆盖的角度（从 +x 逆时针）：远端一侧加上左右两边 */
-const STAND_A0 = (-25 * Math.PI) / 180;
-const STAND_A1 = (205 * Math.PI) / 180;
+/** 看台一整圈（双人分屏时远端的人也要看得到身后的观众），分成前后两段建（单段整圈会在接缝处出毛病） */
+const STAND_SECTORS: [number, number][] = [
+  [(-25 * Math.PI) / 180, (205 * Math.PI) / 180],
+  [(205 * Math.PI) / 180, (335 * Math.PI) / 180],
+];
 
 export interface Scenery {
   /** 看台上观众站的位置 */
@@ -139,25 +141,22 @@ export function buildScenery(root: THREE.Object3D, anisotropy: number): Scenery 
   const tierMats = [0xe9e4da, 0xd8d1c4].map(
     (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 })
   );
-  TIERS.forEach((tr, i) => {
-    root.add(
-      new THREE.Mesh(ringSector(tr.rIn, tr.rOut, STAND_A0, STAND_A1, tr.h), tierMats[i % 2])
-    );
-  });
   const last = TIERS[TIERS.length - 1];
-  root.add(
-    new THREE.Mesh(
-      ringSector(last.rOut, last.rOut + 0.25, STAND_A0, STAND_A1, last.h + 1.4),
-      tierMats[1]
-    )
-  );
+  for (const [a0, a1] of STAND_SECTORS) {
+    TIERS.forEach((tr, i) => {
+      root.add(new THREE.Mesh(ringSector(tr.rIn, tr.rOut, a0, a1, tr.h), tierMats[i % 2]));
+    });
+    root.add(
+      new THREE.Mesh(ringSector(last.rOut, last.rOut + 0.25, a0, a1, last.h + 1.4), tierMats[1])
+    );
+  }
 
   // 观众的位置：每排靠前站一排，约 0.6 米一个，三成多空位（人物见 Crowd）
   const seats: Seat[] = [];
   for (const tr of TIERS) {
     const r = tr.rIn + 0.3;
     const step = 0.6 / r;
-    for (let a = STAND_A0 + step / 2; a < STAND_A1; a += step) {
+    for (let a = step / 2; a < 2 * Math.PI; a += step) {
       if (Math.random() < 0.35) continue;
       const jitter = (Math.random() - 0.5) * 0.15;
       seats.push({ x: (r + jitter) * Math.cos(a), y: (r + jitter) * Math.sin(a), z: tr.h });

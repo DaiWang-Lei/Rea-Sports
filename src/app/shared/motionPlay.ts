@@ -3,7 +3,7 @@
  */
 import { clamp, DEG } from '@/core/math';
 import { rotate } from '@/core/quat';
-import { normalize, vec3 } from '@/core/vec3';
+import { normalize, type Vec3, vec3 } from '@/core/vec3';
 import type { PaddleModel } from '@/input/paddle/PaddleModel';
 import { NO_FEATURES, type SwingInput } from '@/sim/hit/HitResolver';
 import { sideDir } from '@/sim/constants';
@@ -37,13 +37,15 @@ export function humanPaddle(
   const anim = cpuPaddle(body, p, p.swing, t);
   const q = paddle?.paddleQuat();
   if (!q) return anim;
-  const n = normalize(rotate(q, vec3(0, 1, 0)));
-  const up = normalize(rotate(q, vec3(0, 0, 1)));
+  // 设备的朝向以电视方向为 +y；远端的人面朝 −y，转半圈到场上的坐标
+  const f = sideDir(p.side);
+  const toCourt = (v: Vec3) => normalize(vec3(f * v.x, f * v.y, v.z));
+  const n = toCourt(rotate(q, vec3(0, 1, 0)));
+  const up = toCourt(rotate(q, vec3(0, 0, 1)));
   const swinging = p.swing && t >= p.swing.start && t <= p.swing.end + 0.25;
   if (swinging) return { pos: anim.pos, normal: n, handle: vec3(-up.x, -up.y, -up.z) };
   // 前臂方向：拍头在「自己的坐标」里的方位（0 = 正前方，正 = 往正手侧）和仰角，限制在手臂自然能到的范围
   const fh = forehandSign(p);
-  const f = sideDir(p.side);
   // 拍头接近竖直时方位没有意义（噪声会让它乱跳）：离竖直不到约 9° 时前臂朝正前方，到 30° 时完全按拍头方位
   const horiz = Math.hypot(up.x, up.y);
   const w = clamp((horiz - 0.15) / 0.35, 0, 1);

@@ -182,7 +182,7 @@ export class PracticeApp {
         if (result === 'done') this.logCalib();
       },
       onDevicesChanged: () => this.setup.render(),
-      onLinkStatus: (text, ok) => this.setup.setLinkStatus(text, ok),
+      onLinkStatus: () => this.setup.linkChanged(),
     };
     window.addEventListener('keydown', (e) => {
       this.keysDown.add(e.key.toLowerCase());
@@ -387,7 +387,7 @@ export class PracticeApp {
     }
     if (this.setup.onButton(b)) return;
     if (this.step === 'play' && b === 'recenter') {
-      const head = deviceWords(this.input).head;
+      const head = deviceWords(this.input.active).head;
       if (this.input.recenter()) this.hud.flash('已回中', '', 0.8);
       else this.hud.flash('没能回中', `把${head}像遥控器一样指向电视再按`, 1.4, 'bad');
     }

@@ -1,6 +1,7 @@
 /**
  * 游戏页的体感输入：管理 Joy-Con（WebHID）和手机（WebRTC / 本地中转），
  * 每个设备一条处理链：姿态融合 → 球拍模型 → 挥拍识别 / 抛球识别；当前设备的挥拍、抛球与按键交给游戏。
+ * 双人（multi）时每个设备的都交给游戏，游戏按设备分给 1P / 2P。
  */
 import { HAPTICS, type HapticEvent } from '@/config/haptics';
 import { MotionState } from '@/input/fusion/MotionState';
@@ -28,7 +29,13 @@ import {
   RelayGameLink,
   RtcGameLink,
 } from '@/input/phone/PhoneHub';
-import { type Buttons, isLogicalDown, type ImuSample, type LogicalButton } from '@/input/types';
+import {
+  type Buttons,
+  isLogicalDown,
+  type ImuSample,
+  type LogicalButton,
+  TapOnRelease,
+} from '@/input/types';
 import type { SwingFeatures } from '@/sim/hit/HitResolver';
 import type { Stroke } from '@/sim/players/PlayerSim';
 import { roomCode } from './room';
@@ -50,6 +57,8 @@ export interface InputDevice {
   lastActivityAt: number;
   /** 上次看到的陀螺仪零点学习时刻：变了就清掉偏航漂移速度 */
   biasSeenAt: number;
+  /** 挥拍识别出来、还没到最快那一刻的挥拍（按挥拍序号）：正手 / 反手和起始时刻 */
+  strokes: Map<number, { stroke: Stroke; at: SwingCommit['at'] }>;
 }
 
 export interface SwingEventOut {
@@ -120,11 +129,15 @@ export class MotionInput {
   phoneUrl: string | null = null;
   room: string | null = null;
   linkKind: 'relay' | 'rtc' | null = null;
+  /** 手机连接的最新状态（页面晚于状态变化出现时也能读到） */
+  linkStatus = { text: '正在准备手机连接…', ok: false };
   handed: 1 | -1 = 1;
   /** 等球时自动校正当前设备的电视方向（游戏进行中、未暂停时由游戏打开） */
   autoHeading = false;
   /** 识别向上抖手柄抛球（比赛里轮到玩家发球时由游戏打开） */
   tossEnabled = false;
+  /** 双人：每个设备的挥拍、抛球、按键都交出去（不只当前设备），自动校正也对每个设备做 */
+  multi = false;
   private activeKey: string | null = null;
   private hidKeys = new WeakMap<HIDDevice, string>();
   private hidCounter = 0;
@@ -148,7 +161,15 @@ export class MotionInput {
     saveJson(HANDED_KEY, h);
   }
 
-  async start(): Promise<void> {
+  /** 开始接手机、Joy-Con；可以调多次（对打里切换 1 人 / 2 人时共用同一个输入），只开始一次 */
+  start(): Promise<void> {
+    this.starting ??= this.doStart();
+    return this.starting;
+  }
+
+  private starting: Promise<void> | null = null;
+
+  private async doStart(): Promise<void> {
     // 手机：本地开发服务器用中转，线上（或 ?link=rtc）用 WebRTC 直连
     const lan = await devLanInfo();
     const useRtc = new URLSearchParams(location.search).get('link') === 'rtc' || !lan;
@@ -157,7 +178,10 @@ export class MotionInput {
     this.hub = new PhoneHub(useRtc ? new RtcGameLink(this.room!) : new RelayGameLink());
     this.hub.onPhoneAdded = (p) => this.attachPhone(p);
     this.hub.onPhoneRemoved = (p) => this.detach(`phone-${p.id}`);
-    this.hub.onStatus = (text, ok) => this.events.onLinkStatus?.(text, ok);
+    this.hub.onStatus = (text, ok) => {
+      this.linkStatus = { text, ok };
+      this.events.onLinkStatus?.(text, ok);
+    };
     this.hub.connect();
     this.phoneUrl = phonePageUrl(lan, this.room);
 
@@ -180,8 +204,7 @@ export class MotionInput {
     for (const d of ds) void this.attachJoyCon(d);
   }
 
-  rumble(event: HapticEvent): void {
-    const d = this.active;
+  rumble(event: HapticEvent, d: InputDevice | null = this.active): void {
     if (!d) return;
     if (d.joycon) d.joycon.rumble(HAPTICS[event]);
     else if (d.phone) d.phone.rumble(HAPTICS[event]);
@@ -226,6 +249,7 @@ export class MotionInput {
       lastSampleAt: -Infinity,
       lastActivityAt: -Infinity,
       biasSeenAt: -Infinity,
+      strokes: new Map(),
     };
     this.devices.set(key, d);
     if (!this.activeKey) this.activeKey = key;
@@ -253,6 +277,8 @@ export class MotionInput {
     const driver = new JoyConDriver(hid);
     const d = this.newDevice(key, 'joycon', driver.name);
     d.joycon = driver;
+    // 切换人数的键（R 的 X）也是校准组合键 X + ZR 的一半：松开时才算，按住期间按过 ZR / ZL 就不算
+    const players = new TapOnRelease();
     driver.events = {
       onSamples: (s) => this.onSamples(d, s),
       onRawReport: (id, data, arrival) => this.events.onRawReport?.(d, id, data, arrival),
@@ -265,6 +291,10 @@ export class MotionInput {
         if (calibrateCombo(driver.side, b) && !calibrateCombo(driver.side, prev)) {
           this.makeActive(d);
           this.requestCalibration(d);
+        }
+        if (players.update(isLogicalDown(driver.side, b, 'players'), b.zr || b.zl)) {
+          this.onButton(d, 'players', true);
+          this.onButton(d, 'players', false);
         }
       },
     };
@@ -292,8 +322,13 @@ export class MotionInput {
 
   private onButton(d: InputDevice, name: LogicalButton, down: boolean): void {
     if (down) this.makeActive(d);
-    if (d !== this.active) return;
+    if (!this.listens(d)) return;
     this.events.onButton?.(name, down, d);
+  }
+
+  /** 这个设备的挥拍、抛球、按键交不交给游戏 */
+  private listens(d: InputDevice): boolean {
+    return this.multi || d === this.active;
   }
 
   private makeActive(d: InputDevice): void {
@@ -314,24 +349,23 @@ export class MotionInput {
         d.biasSeenAt = d.motion.biasLearnedAt;
         d.paddle.drift = 0;
       }
-      d.paddle.trackHeading(f.gyro, f.dt, this.autoHeading && d === this.active);
+      d.paddle.trackHeading(f.gyro, f.dt, this.autoHeading && this.listens(d));
       d.samples++;
       d.lastSampleAt = performance.now();
       const toss = d.toss.process(f);
-      if (toss && this.tossEnabled && d === this.active) this.events.onToss?.(d, toss);
+      if (toss && this.tossEnabled && this.listens(d)) this.events.onToss?.(d, toss);
       const evs = d.detector.process(f);
       if (!evs.length) continue;
       // 有明显挥拍的设备成为当前设备
       if (evs.some((e) => e.type === 'commit' && e.path === 'fast')) this.makeActive(d);
-      if (d !== this.active) continue;
+      if (!this.listens(d)) continue;
       for (const e of evs) {
         if (e.type === 'commit') {
-          const dir = (e.dir * this.handed) as 1 | -1 | 0;
+          const dir = (e.dir * d.paddle.handed) as 1 | -1 | 0;
           const hint = d.paddle.stanceHint();
           const stroke: Stroke =
             dir !== 0 && e.yawFrac >= 0.3 ? (dir > 0 ? 'fh' : 'bh') : (hint ?? 'fh');
-          this.lastStroke.set(e.id, stroke);
-          this.lastCommitAt.set(e.id, e.at);
+          d.strokes.set(e.id, { stroke, at: e.at });
           this.events.onSwing?.({
             device: d,
             commit: e,
@@ -340,8 +374,9 @@ export class MotionInput {
             features: d.paddle.features(e.at, e.path === 'gentle' ? e.at : null, stroke),
           });
         } else {
-          const stroke = this.lastStroke.get(e.id) ?? 'fh';
-          const onset = this.lastCommitAt.get(e.id) ?? e.at;
+          const stroke = d.strokes.get(e.id)?.stroke ?? 'fh';
+          const onset = d.strokes.get(e.id)?.at ?? e.at;
+          d.strokes.delete(e.id);
           const neutralPitch = d.paddle.neutralPitch(stroke);
           this.events.onPeak?.({
             device: d,
@@ -355,7 +390,4 @@ export class MotionInput {
       }
     }
   }
-
-  private lastStroke = new Map<number, Stroke>();
-  private lastCommitAt = new Map<number, SwingCommit['at']>();
 }

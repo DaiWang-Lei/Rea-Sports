@@ -6,7 +6,7 @@ import { AVATAR_THUMBS } from '@/render/avatar/thumbs';
 import { MatchSim } from '@/sim/MatchSim';
 import { loadAvatarChoice, saveAvatarChoice } from './avatarChoice';
 import { GameView } from './GameView';
-import { MatchApp } from './match/MatchApp';
+import { PlayHost } from './PlayHost';
 import { PracticeApp } from './practice/PracticeApp';
 import { loadOverrides, overrideCount, resetOverrides } from './shared/tuningStore';
 import { tuning } from '@/config/tuning';
@@ -119,6 +119,10 @@ function showMenu(): void {
           <strong>和电脑对打（手机 / Joy-Con / 键盘）</strong>
           <span>M3：5 个等级的电脑对手，6 分或 11 分一局。按 A 或向上抖手柄抛球发球</span>
         </a>
+        <a class="menu-item" href="?mode=versus">
+          <strong>双人对打（分屏，两个手柄）</strong>
+          <span>左右分屏，各拿一只 Joy-Con 或手机。1P 用「你」的人物，2P 用「对手」的</span>
+        </a>
         <a class="menu-item" href="?mode=practice">
           <strong>发球机练习（手机 / Joy-Con / 键盘）</strong>
           <span>M2：真正用挥拍回球。每一球告诉你早了还是晚了、正手还是反手、力度和旋转</span>
@@ -175,9 +179,9 @@ function showMenu(): void {
 
 const mode = params.get('mode');
 // 进场前先把选的人物准备好（带骨骼的模型要下载）
-if (mode === 'autoplay' || mode === 'match' || mode === 'practice')
+if (mode === 'autoplay' || mode === 'match' || mode === 'practice' || mode === 'versus')
   await preloadAvatars(loadAvatarChoice());
 if (mode === 'autoplay') startAutoplay();
-else if (mode === 'match') new MatchApp(app);
+else if (mode === 'match' || mode === 'versus') new PlayHost(app, mode);
 else if (mode === 'practice') new PracticeApp(app);
 else showMenu();

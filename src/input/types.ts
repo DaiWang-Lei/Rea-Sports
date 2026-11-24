@@ -63,14 +63,40 @@ export function emptyButtons(): Buttons {
  * - back：返回（R: B，L: ↓）
  * - recenter：回中（R: Y 或按下摇杆，L: ↑ 或按下摇杆）
  * - pause：暂停（R: +，L: −）
+ * - players：对打里切换 1 人 / 2 人（R: X，L: ←）
  */
-export type LogicalButton = 'confirm' | 'back' | 'recenter' | 'pause';
+export type LogicalButton = 'confirm' | 'back' | 'recenter' | 'pause' | 'players';
 
 export const LOGICAL_MAP: Record<JoyConSide, Record<LogicalButton, ButtonName[]>> = {
-  R: { confirm: ['a'], back: ['b'], recenter: ['y', 'rStick'], pause: ['plus'] },
-  L: { confirm: ['right'], back: ['down'], recenter: ['up', 'lStick'], pause: ['minus'] },
+  R: { confirm: ['a'], back: ['b'], recenter: ['y', 'rStick'], pause: ['plus'], players: ['x'] },
+  L: {
+    confirm: ['right'],
+    back: ['down'],
+    recenter: ['up', 'lStick'],
+    pause: ['minus'],
+    players: ['left'],
+  },
 };
 
 export function isLogicalDown(side: JoyConSide, b: Buttons, logical: LogicalButton): boolean {
   return LOGICAL_MAP[side][logical].some((n) => b[n]);
+}
+
+/**
+ * 松开时才算按了一下的键（切换人数的 X 也是校准组合键 X + ZR 的一半）：按住期间碰过 spoil 就不算。
+ * 每次手柄报告按键时调用，返回这一次是不是算按了一下
+ */
+export class TapOnRelease {
+  private down = false;
+  private armed = false;
+
+  update(down: boolean, spoil: boolean): boolean {
+    const was = this.down;
+    this.down = down;
+    if (down && !was) this.armed = true;
+    if (spoil) this.armed = false;
+    if (down || !was || !this.armed) return false;
+    this.armed = false;
+    return true;
+  }
 }

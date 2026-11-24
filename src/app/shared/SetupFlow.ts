@@ -9,24 +9,27 @@
 import QRCode from 'qrcode';
 import type { Sfx } from '@/audio/Sfx';
 import type { Hud } from '@/ui/Hud';
-import type { CalibrateResult, MotionInput } from '../input/MotionInput';
+import type { CalibrateResult, InputDevice, MotionInput } from '../input/MotionInput';
+import { playersRow } from './players';
 
 export type SetupStep = 'connect' | 'point' | 'done';
 
-/** 当前设备的叫法：拍头是哪一端、校准和回中按哪个键 */
-export function deviceWords(input: MotionInput): {
+/** 设备的叫法：拍头是哪一端、确认 / 校准 / 回中按哪个键 */
+export function deviceWords(d: InputDevice | null): {
   phone: boolean;
   head: string;
+  /** 确认键：手机「确认」，Joy-Con R 的 A，Joy-Con L 的 → */
+  confirm: string;
   combo: string;
   /** 回中键：手机「回中」，Joy-Con R 的 Y，Joy-Con L 的 ↑ */
   recenterKey: string;
 } {
-  const d = input.active;
   const phone = d?.kind === 'phone';
   const left = d?.joycon?.side === 'L';
   return {
     phone,
     head: phone ? '手机顶端' : '肩键一端',
+    confirm: phone ? '「确认」' : left ? '→' : 'A',
     combo: phone ? '「确认」' : left ? '↑ + ZL' : 'X + ZR',
     recenterKey: phone ? '「回中」' : left ? '↑' : 'Y',
   };
@@ -41,11 +44,12 @@ export interface SetupOptions {
   onKeyboard: () => void;
   /** 键盘模式的说明（连接页上） */
   keyboardHelp: string;
+  /** 给了就在连接页上放「人数」一排，选 2 人时调用（和电脑对打） */
+  onTwoPlayers?: () => void;
 }
 
 export class SetupFlow {
   step: SetupStep = 'connect';
-  private linkStatus = { text: '正在准备手机连接…', ok: false };
   private shownStep: SetupStep | null = null;
   private shownKind: string | null = null;
 
@@ -61,9 +65,18 @@ export class SetupFlow {
     return this.step === 'done';
   }
 
-  setLinkStatus(text: string, ok: boolean): void {
-    this.linkStatus = { text, ok };
+  /** 手机连接状态变了（状态本身在 input.linkStatus） */
+  linkChanged(): void {
     this.render();
+  }
+
+  /** 手柄已经连着、定过电视方向（从双人切过来）：不用再连接、校准。返回 true = 已跳过 */
+  skipIfReady(): boolean {
+    const d = this.input.active;
+    if (!d || !this.input.streaming || !d.paddle.calibrated) return false;
+    this.step = 'done';
+    this.overlay.hidden = true;
+    return true;
   }
 
   /** 重新校准（暂停菜单里） */
@@ -92,7 +105,7 @@ export class SetupFlow {
 
   /** 校准 / 回中的结果：校准这一步里完成流程；打球中给出提示 */
   onCalibrate(result: CalibrateResult): void {
-    const w = deviceWords(this.input);
+    const w = deviceWords(this.input.active);
     if (result === 'done') {
       this.sfx.beep(1040, 0.1);
       if (this.step === 'point') this.finish('校准完成');
@@ -115,6 +128,7 @@ export class SetupFlow {
     o.innerHTML = `
       <div class="pr-panel">
         <h2>${this.opts.title} · 连接体感设备</h2>
+        ${this.opts.onTwoPlayers ? playersRow(1) : ''}
         <div class="pr-connect">
           <div class="pr-box">
             <h3>用手机</h3>
@@ -123,7 +137,7 @@ export class SetupFlow {
               <li>手机和这台电脑连同一个 Wi-Fi，用相机（iPhone）或 Chrome（安卓）扫码，不要用微信扫。</li>
               <li>在手机上点「开始」，iPhone 选「允许」动作与方向。</li>
             </ol>
-            <div class="pr-link ${this.linkStatus.ok ? 'ok' : 'warn'}">● ${this.linkStatus.text}</div>
+            <div class="pr-link ${this.input.linkStatus.ok ? 'ok' : 'warn'}">● ${this.input.linkStatus.text}</div>
             ${this.input.room ? `<div class="pr-room">房间号 ${this.input.room}</div>` : ''}
           </div>
           <div class="pr-box">
@@ -145,6 +159,9 @@ export class SetupFlow {
     o.querySelector('[data-act="joycon"]')?.addEventListener('click', () => {
       void this.input.requestJoyCon().catch(() => {});
     });
+    o.querySelector('[data-players="2"]')?.addEventListener('click', () =>
+      this.opts.onTwoPlayers?.()
+    );
     o.querySelector('[data-act="keyboard"]')?.addEventListener('click', () => {
       this.step = 'done';
       o.hidden = true;
@@ -166,7 +183,7 @@ export class SetupFlow {
     this.shownKind = kind;
     const o = this.overlay;
     const dev = this.input.active;
-    const w = deviceWords(this.input);
+    const w = deviceWords(this.input.active);
     const body = w.phone
       ? `<h2>校准：指向电视</h2>
          <p class="pr-big">把手机<b>顶端像遥控器一样指向电视</b>，按手机上的「确认」。</p>
