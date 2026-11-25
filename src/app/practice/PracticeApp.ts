@@ -25,7 +25,7 @@ import { Renderer } from '@/render/Renderer';
 import { Hud } from '@/ui/Hud';
 import { MotionInput, type SwingEventOut } from '../input/MotionInput';
 import { latencyMs, screenKey, setLatencyMs } from '../shared/latency';
-import { deviceLine, deviceSwingInput, humanPaddle, keySwingInput } from '../shared/motionPlay';
+import { deviceLine, deviceSwingInput, HumanPaddle, keySwingInput } from '../shared/motionPlay';
 import { deviceWords, SetupFlow } from '../shared/SetupFlow';
 import {
   calibLog,
@@ -97,6 +97,8 @@ export class PracticeApp {
   private readonly hud: Hud;
   private readonly sfx = new Sfx();
   private readonly input = new MotionInput();
+  /** 画面上你的球拍（挥拍开始、结束时平滑过渡） */
+  private readonly paddleView = new HumanPaddle();
   private sim: FeederSim;
   private settings = loadSettings();
   private readonly setup: SetupFlow;
@@ -318,14 +320,13 @@ export class PracticeApp {
       players: { near: { player: s.player, body, paddle: this.nearPaddle(t, body) } },
       machine: s.machine,
       extraBalls: s.flyers.map((f) => f.ball.p),
-      shake: 0,
     });
   }
 
-  /** 玩家的球拍：已校准时朝向 1:1 跟随设备，位置在手上；挥拍时位置跟随挥拍动画 */
+  /** 玩家的球拍：已校准时朝向 1:1 跟随设备，位置在手上；挥拍时位置跟随挥拍动画（之间平滑过渡） */
   private nearPaddle(t: number, body: { x: number; y: number }) {
     const paddle = this.keyboard ? null : (this.input.active?.paddle ?? null);
-    return humanPaddle(paddle, this.sim.player, body, t);
+    return this.paddleView.pose(paddle, this.sim.player, body, t);
   }
 
   // ---------------------------------------------------------------- 输入

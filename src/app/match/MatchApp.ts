@@ -30,7 +30,7 @@ import {
 import { bindCrowd, crowdRow } from '../shared/crowdVolume';
 import { latencyMs, screenKey, setLatencyMs } from '../shared/latency';
 import { median, serveText, strokeText, timingText, WHIFF_TEXT } from '../shared/matchText';
-import { deviceLine, deviceSwingInput, humanPaddle, keySwingInput } from '../shared/motionPlay';
+import { deviceLine, deviceSwingInput, HumanPaddle, keySwingInput } from '../shared/motionPlay';
 import { deviceWords, SetupFlow } from '../shared/SetupFlow';
 import { playersRow } from '../shared/players';
 
@@ -101,6 +101,8 @@ export class MatchApp {
   private readonly layer: HTMLDivElement;
   private readonly abort = new AbortController();
   private disposed = false;
+  /** 画面上你的球拍（挥拍开始、结束时平滑过渡） */
+  private readonly paddleView = new HumanPaddle();
   private sim: MatchSim;
   private settings = loadSettings();
   private stage: Exclude<Step, 'setup'> = 'choose';
@@ -147,7 +149,7 @@ export class MatchApp {
       names: this.names(),
       nearPaddle: (t, body) => {
         const paddle = this.keyboard ? null : (this.input.active?.paddle ?? null);
-        return humanPaddle(paddle, this.sim.players.near, body, t);
+        return this.paddleView.pose(paddle, this.sim.players.near, body, t);
       },
       onEvent: (e) => this.onMatchEvent(e),
     });

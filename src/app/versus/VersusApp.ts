@@ -20,7 +20,7 @@ import type { PlayHost } from '../PlayHost';
 import { bindCrowd, crowdRow } from '../shared/crowdVolume';
 import { latencyMs, screenKey, setLatencyMs } from '../shared/latency';
 import { median, serveText, strokeText, timingText, WHIFF_TEXT } from '../shared/matchText';
-import { deviceSwingInput, humanPaddle } from '../shared/motionPlay';
+import { deviceSwingInput, HumanPaddle } from '../shared/motionPlay';
 import { playersRow } from '../shared/players';
 import { deviceWords } from '../shared/SetupFlow';
 
@@ -102,6 +102,8 @@ export class VersusApp {
   private readonly layer: HTMLDivElement;
   private readonly abort = new AbortController();
   private disposed = false;
+  /** 画面上两人的球拍（挥拍开始、结束时平滑过渡） */
+  private readonly paddleViews = { near: new HumanPaddle(), far: new HumanPaddle() };
   private sim: MatchSim;
   private settings = loadSettings();
   private step: Step = 'lobby';
@@ -275,7 +277,12 @@ export class VersusApp {
   }
 
   private paddle(side: Side, t: number, body: { x: number; y: number }) {
-    return humanPaddle(this.slots[side]?.paddle ?? null, this.sim.players[side], body, t);
+    return this.paddleViews[side].pose(
+      this.slots[side]?.paddle ?? null,
+      this.sim.players[side],
+      body,
+      t
+    );
   }
 
   private sideOf(d: InputDevice): Side | null {

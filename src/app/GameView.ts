@@ -33,6 +33,12 @@ export interface GameViewOptions {
 }
 
 /**
+ * 扣杀时镜头的顿挫：顺着球飞的方向轻轻一顶（push 米）、略往下沉（dip 米），dur 秒内按半个正弦回正。
+ * 以前是 0.12 秒的随机乱晃，看着像画面在抖
+ */
+const KICK = { push: 0.04, dip: 0.012, dur: 0.15 };
+
+/**
  * 观众声的音量：平时的低语、激动到顶时的欢呼层、全场安静后击球声的回声比例。
  * 低语一直在响，太大了像一层底噪（2026-11-24 从 0.22 减半）；整体再乘玩家设置的观众声大 / 小 / 关
  */
@@ -49,7 +55,9 @@ export class GameView {
   private names: HudNames;
   private acc = 0;
   private prev: Snapshot;
-  private shakeUntil = 0;
+  /** 上一次扣杀的时刻（仿真时间）和球飞的水平方向 */
+  private kickAt = -Infinity;
+  private kickDir = { x: 0, y: 0 };
   private trail: TrailStyle = 'normal';
   private crowdOn = false;
 
@@ -175,7 +183,7 @@ export class GameView {
         },
       },
       serveCue: this.serveCue(),
-      shake: s.t < this.shakeUntil ? 0.02 : 0,
+      kick: this.kick(t),
     };
     this.renderer.render(frame);
 
@@ -216,6 +224,18 @@ export class GameView {
     }
   }
 
+  /** 扣杀顿挫这一刻镜头挪开多少（t = 画面上的仿真时刻） */
+  private kick(t: number): Vec3 | undefined {
+    const age = t - this.kickAt;
+    if (!(age >= 0 && age < KICK.dur)) return undefined;
+    const s = Math.sin((Math.PI * age) / KICK.dur);
+    return {
+      x: this.kickDir.x * KICK.push * s,
+      y: this.kickDir.y * KICK.push * s,
+      z: -KICK.dip * s,
+    };
+  }
+
   /** 人抛了球、还没发出去：最佳击球高度的提示圈（球是竖直抛的，圈就在球的正下方 / 正上方） */
   private serveCue(): ServeCue | null {
     const s = this.sim;
@@ -240,7 +260,10 @@ export class GameView {
         if (e.oops) this.hud.flash('哎呀!', '', 0.9, 'bad');
         if (e.smash) {
           this.hud.flash('扣杀!', '', 0.9, 'big');
-          this.shakeUntil = this.sim.t + 0.12;
+          const v = this.sim.ball.v;
+          const h = Math.hypot(v.x, v.y) || 1;
+          this.kickAt = e.t;
+          this.kickDir = { x: v.x / h, y: v.y / h };
         }
         this.crowdFollow(e.rallyHits);
         break;

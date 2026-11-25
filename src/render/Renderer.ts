@@ -59,8 +59,8 @@ export interface RenderFrame {
   extraBalls?: Vec3[];
   /** 人发球时的最佳击球点提示：圈的位置、理想击球时刻、强力发球的半窗口（秒） */
   serveCue?: ServeCue | null;
-  /** 震屏：剩余强度（米） */
-  shake: number;
+  /** 扣杀时镜头的一下顿挫：这一帧镜头整体挪开多少（米，仿真坐标）；没有就不动 */
+  kick?: Vec3;
 }
 
 export class Renderer {
@@ -200,11 +200,10 @@ export class Renderer {
       );
     }
 
-    const shakeX = frame.shake > 0 ? (Math.random() - 0.5) * frame.shake : 0;
-    const shakeZ = frame.shake > 0 ? (Math.random() - 0.5) * frame.shake : 0;
     const k = 1 - Math.exp(-dt / 0.3);
+    const kick = frame.kick ?? NO_KICK;
     if (!this.split) {
-      this.aim('near', frame.players.near.body.x, CAMERA, 0.25, k, shakeX, shakeZ);
+      this.aim('near', frame.players.near.body.x, CAMERA, 0.25, k, kick);
       this.renderer.render(this.scene, this.cameras.near);
       return;
     }
@@ -218,31 +217,34 @@ export class Renderer {
       this.renderer.setViewport(x, 0, w / 2, h);
       this.renderer.setScissor(x, 0, w / 2, h);
       const me = frame.players[side]?.body.x ?? 0;
-      this.aim(side, me, SPLIT_CAMERA, SPLIT_CAMERA.follow, k, shakeX, shakeZ);
+      this.aim(side, me, SPLIT_CAMERA, SPLIT_CAMERA.follow, k, kick);
       this.renderer.render(this.scene, this.cameras[side]);
     }
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, w, h);
   }
 
-  /** 这一边的镜头：在这个人身后，横向跟着他走（平滑） */
+  /** 这一边的镜头：在这个人身后，横向跟着他走（平滑）；kick = 扣杀顿挫，镜头和看的点一起挪（平移，不转） */
   private aim(
     side: Side,
     meX: number,
     c: typeof CAMERA,
     follow: number,
     k: number,
-    shakeX: number,
-    shakeZ: number
+    kick: Vec3
   ): void {
     const f = sideDir(side);
     this.camX[side] += (follow * meX - this.camX[side]) * k;
     const cx = this.camX[side];
     const cam = this.cameras[side];
-    toThree({ x: cx + shakeX, y: f * c.y, z: c.z + shakeZ }, cam.position);
-    cam.lookAt(toThree({ x: 0.4 * cx, y: f * c.lookY, z: TABLE.height + c.lookZ }));
+    toThree({ x: cx + kick.x, y: f * c.y + kick.y, z: c.z + kick.z }, cam.position);
+    cam.lookAt(
+      toThree({ x: 0.4 * cx + kick.x, y: f * c.lookY + kick.y, z: TABLE.height + c.lookZ + kick.z })
+    );
   }
 }
+
+const NO_KICK: Vec3 = { x: 0, y: 0, z: 0 };
 
 const SIDES = ['near', 'far'] as const;
 

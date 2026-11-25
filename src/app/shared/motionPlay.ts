@@ -26,7 +26,8 @@ const FOREARM_DOWN = 35 * DEG;
 /**
  * 玩家的球拍：已校准时朝向 1:1 跟随设备。等球时前臂顺着拍柄绕肘转（手的位置跟着拍头的指向走，
  * 像真人握拍：拍子和前臂大致是一条线），挥拍时位置跟随挥拍动画（保证碰得到球）。
- * paddle = null（键盘、没有设备）或还没定电视方向时整个按动画走
+ * paddle = null（键盘、没有设备）或还没定电视方向时整个按动画走。
+ * 两种位置之间的切换是突变的，画面上要用 HumanPaddle 过渡
  */
 export function humanPaddle(
   paddle: PaddleModel | null,
@@ -34,16 +35,79 @@ export function humanPaddle(
   body: { x: number; y: number },
   t: number
 ): PaddlePose {
+  return paddleParts(paddle, p, body, t).pose;
+}
+
+/** 挥拍开始时用这么久（秒，且不晚于击球那一刻）从手上的位置过渡到挥拍动作；挥完用这么久滑回手柄的位置 */
+const BLEND_IN = 0.05;
+const BLEND_OUT = 0.25;
+
+/**
+ * 画面上玩家的球拍：同 humanPaddle，但在「跟手柄」和「挥拍动画」两种位置之间平滑过渡。
+ * 挥拍是识别出来时（离击球约 70ms）才开始算的，那一刻动画已经在往前挥，直接切换球拍会瞬移三四十厘米。
+ * 只过渡位置：拍面朝向一直跟手柄，本来就连续。每个画面上的人一个
+ */
+export class HumanPaddle {
+  private swinging = false;
+  /** 切换那一刻画面上的位置，和过渡的起止时刻 */
+  private from: Vec3 | null = null;
+  private t0 = 0;
+  private t1 = 0;
+  private last: Vec3 | null = null;
+  private lastT = -Infinity;
+
+  pose(
+    paddle: PaddleModel | null,
+    p: PlayerSim,
+    body: { x: number; y: number },
+    t: number
+  ): PaddlePose {
+    // 新开一局（时间往回走）：从头来
+    if (t < this.lastT) {
+      this.from = this.last = null;
+      this.swinging = false;
+    }
+    this.lastT = t;
+    const { pose, swinging } = paddleParts(paddle, p, body, t);
+    if (swinging !== this.swinging) {
+      this.swinging = swinging;
+      this.from = this.last;
+      this.t0 = t;
+      this.t1 = t + (swinging ? clamp((p.swing?.hit ?? t) - t, 0.02, BLEND_IN) : BLEND_OUT);
+    }
+    let pos = pose.pos;
+    if (this.from) {
+      const u = (t - this.t0) / (this.t1 - this.t0);
+      if (u >= 1) this.from = null;
+      else {
+        const w = clamp(u, 0, 1);
+        const s = w * w * (3 - 2 * w);
+        const a = this.from;
+        pos = vec3(a.x + (pos.x - a.x) * s, a.y + (pos.y - a.y) * s, a.z + (pos.z - a.z) * s);
+      }
+    }
+    this.last = pos;
+    return { ...pose, pos };
+  }
+}
+
+function paddleParts(
+  paddle: PaddleModel | null,
+  p: PlayerSim,
+  body: { x: number; y: number },
+  t: number
+): { pose: PaddlePose; swinging: boolean } {
   const anim = cpuPaddle(body, p, p.swing, t);
+  const swinging = !!p.swing && t >= p.swing.start && t <= p.swing.end + 0.25;
   const q = paddle?.paddleQuat();
-  if (!q) return anim;
+  if (!q) return { pose: anim, swinging };
   // 设备的朝向以电视方向为 +y；远端的人面朝 −y，转半圈到场上的坐标
   const f = sideDir(p.side);
   const toCourt = (v: Vec3) => normalize(vec3(f * v.x, f * v.y, v.z));
   const n = toCourt(rotate(q, vec3(0, 1, 0)));
   const up = toCourt(rotate(q, vec3(0, 0, 1)));
-  const swinging = p.swing && t >= p.swing.start && t <= p.swing.end + 0.25;
-  if (swinging) return { pos: anim.pos, normal: n, handle: vec3(-up.x, -up.y, -up.z) };
+  if (swinging)
+    return { pose: { pos: anim.pos, normal: n, handle: vec3(-up.x, -up.y, -up.z) }, swinging };
   // 前臂方向：拍头在「自己的坐标」里的方位（0 = 正前方，正 = 往正手侧）和仰角，限制在手臂自然能到的范围
   const fh = forehandSign(p);
   // 拍头接近竖直时方位没有意义（噪声会让它乱跳）：离竖直不到约 9° 时前臂朝正前方，到 30° 时完全按拍头方位
@@ -59,13 +123,16 @@ export function humanPaddle(
     e.z + FOREARM * Math.sin(el)
   );
   return {
-    pos: vec3(
-      grip.x + up.x * GRIP_TO_CENTER,
-      grip.y + up.y * GRIP_TO_CENTER,
-      grip.z + up.z * GRIP_TO_CENTER
-    ),
-    normal: n,
-    handle: vec3(-up.x, -up.y, -up.z),
+    pose: {
+      pos: vec3(
+        grip.x + up.x * GRIP_TO_CENTER,
+        grip.y + up.y * GRIP_TO_CENTER,
+        grip.z + up.z * GRIP_TO_CENTER
+      ),
+      normal: n,
+      handle: vec3(-up.x, -up.y, -up.z),
+    },
+    swinging,
   };
 }
 
