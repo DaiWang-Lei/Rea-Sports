@@ -37,9 +37,13 @@ const SKIN_URLS: Record<KenneySkin, string> = {
 
 /** 肩（上臂根部）离地多高（米）：和 paddlePose.shoulderOf 一致 */
 const SHOULDER_Z = 1.2;
-/** 拳头：食指每节往掌心弯多少；拇指往手背一侧收多少、贴到弯起来的食指上（这个手套形的手这样最像握拳；弧度） */
+/**
+ * 拳头（弧度）：四指（这个手套形的手四指连成一块，骨骼叫 Index）每节往掌心弯多少；
+ * 拇指根往掌心收（base）、往四指那边摆（swing），第二节再弯（tip），横着包住弯起来的四指。
+ * 以前拇指往手背收，拳头一握拇指竖在外面，像点赞
+ */
 const FINGER_CURL = 1.25;
-const THUMB_CURL = -0.6;
+const THUMB_CURL = { base: 0.9, swing: 0.9, tip: 1.0 };
 /** 握拍处在手掌里的位置：从手腕顺着手指方向、往掌心外各多远（按手掌长的比例） */
 const GRIP_ALONG = 0.55;
 const GRIP_OUT = 0.3;
@@ -360,7 +364,7 @@ export class KenneyBody implements AvatarBody {
     return { finger, palm: palm.normalize(), thumb, length };
   }
 
-  /** 手指弯成拳头（只做一次）：食指往掌心弯，拇指收过来贴住食指 */
+  /** 手指弯成拳头（只做一次）：四指往掌心弯，拇指收过来横着包住四指 */
   private makeFists(): void {
     for (const side of ['Left', 'Right'] as const) {
       const h = this.hands[side];
@@ -368,7 +372,9 @@ export class KenneyBody implements AvatarBody {
       const thumbAxis = new THREE.Vector3().crossVectors(h.thumb, h.palm).normalize();
       for (const n of ['Index1', 'Index2', 'Index3'])
         this.curl(`${side}Hand${n}`, fingerAxis, FINGER_CURL);
-      this.curl(`${side}HandThumb1`, thumbAxis, THUMB_CURL);
+      this.curl(`${side}HandThumb1`, thumbAxis, THUMB_CURL.base);
+      this.curl(`${side}HandThumb1`, h.palm, THUMB_CURL.swing);
+      this.curl(`${side}HandThumb2`, thumbAxis, THUMB_CURL.tip);
     }
   }
 
