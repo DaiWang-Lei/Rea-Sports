@@ -11,6 +11,13 @@ import { type RenderFrame, Renderer } from '@/render/Renderer';
 import { ballSpin, type TrailStyle } from '@/render/BallView';
 import type { ServeCue } from '@/render/Effects';
 import { Hud, type HudNames } from '@/ui/Hud';
+import {
+  isHighlight,
+  REPLAY,
+  type Replay,
+  type ReplayEvent,
+  ReplayRecorder,
+} from '@/render/Replay';
 import { CROWD_GAIN, loadCrowdVolume } from './shared/crowdVolume';
 import { SIM_DT } from '@/sim/constants';
 
@@ -60,6 +67,14 @@ export class GameView {
   private kickDir = { x: 0, y: 0 };
   private trail: TrailStyle = 'normal';
   private crowdOn = false;
+  /** 得分回放：最近几秒的画面、要放的那一分（得分时刻）、什么时候开始放、正在放的 */
+  private readonly recorder = new ReplayRecorder();
+  private replayPoint = NaN;
+  private replayAt = NaN;
+  private replay: Replay | null = null;
+  /** 最后一拍谁打的、是不是扣杀；这一分开打前有没有人到局点（判断要不要回放） */
+  private lastHit: { side: Side; smash: boolean } | null = null;
+  private gamePointBefore = false;
   /** 最后一分是不是球打到人（一局结束时输的一方照样捂脸） */
   private lastPointHit = false;
 
@@ -90,6 +105,9 @@ export class GameView {
 
   /** 换上新的一局：观众回到平时的低语（上一局可能停在长回合的屏息里） */
   setSim(sim: MatchSim): void {
+    if (this.replay) this.endReplay();
+    this.replayAt = NaN;
+    this.recorder.clear();
     this.sim = sim;
     this.acc = 0;
     this.prev = this.snapshot();
@@ -121,8 +139,34 @@ export class GameView {
     };
   }
 
-  /** 每帧调用：推进仿真（最多 12 步，避免卡顿后狂追），处理事件，渲染 */
+  /** 正在回放，或马上要回放（结算页等它放完） */
+  get busy(): boolean {
+    return this.replay !== null || !Number.isNaN(this.replayAt);
+  }
+
+  get replaying(): boolean {
+    return this.replay !== null;
+  }
+
+  /** 按 A 跳过回放（正在放的，或马上要放的）；没有回放返回 false */
+  skipReplay(): boolean {
+    if (this.replay) {
+      this.endReplay();
+      return true;
+    }
+    if (!Number.isNaN(this.replayAt)) {
+      this.replayAt = NaN;
+      return true;
+    }
+    return false;
+  }
+
+  /** 每帧调用：推进仿真（最多 12 步，避免卡顿后狂追），处理事件，渲染；回放中只放回放 */
   frame(dtReal: number): void {
+    if (this.replay) {
+      this.stepReplay(this.paused ? 0 : Math.max(0, Math.min(0.1, dtReal)));
+      return;
+    }
     if (!this.paused) this.acc += Math.max(0, Math.min(0.1, dtReal)) * this.timeScale;
     let steps = 0;
     while (this.acc >= SIM_DT && steps < 12) {
@@ -138,7 +182,66 @@ export class GameView {
       this.crowdOn = !this.paused;
       this.sfx.setCrowdOn(this.crowdOn);
     }
+    if (!Number.isNaN(this.replayAt) && this.sim.t >= this.replayAt && !this.paused) {
+      this.startReplay();
+      return;
+    }
     this.draw(this.acc / SIM_DT);
+    // 打球时把画面记下来（回放用）
+    const ph = this.sim.phase.kind;
+    if (!this.paused && (ph === 'play' || ph === 'pointOver')) {
+      const f = this.renderer.snapshot();
+      if (f) this.recorder.push(f);
+    }
+  }
+
+  private startReplay(): void {
+    this.replayAt = NaN;
+    const r = this.recorder.clip(this.replayPoint);
+    if (!r) return;
+    this.replay = r;
+    this.renderer.beginReplay(r.frame());
+    this.hud.setBadge('▶ 回放', '按 A 跳过');
+    this.stepReplay(0);
+  }
+
+  /** 回放往前走 dt 秒（真实时间）：重放这段里的击球、落台声和特效，画这一帧 */
+  private stepReplay(dt: number): void {
+    const r = this.replay!;
+    for (const e of r.advance(dt)) this.replayEvent(e);
+    this.renderer.renderReplay(r.frame(), dt);
+    if (r.done) this.endReplay();
+  }
+
+  private replayEvent(e: ReplayEvent): void {
+    const pan = (p: { x: number }) => p.x / 1.5;
+    switch (e.type) {
+      case 'hit':
+        this.sfx.hit(Math.min(1, e.speed / 15), pan(e.p), e.smash || !!e.powerServe);
+        this.renderer.hitEffect(e.p, e.smash || !!e.powerServe);
+        break;
+      case 'bounce':
+        this.sfx.table(e.impact, pan(e.p));
+        this.renderer.bounceEffect(e.p);
+        break;
+      case 'net':
+        this.sfx.net(e.impact);
+        break;
+      case 'floor':
+        this.sfx.floor(e.impact, pan(e.p));
+        break;
+      case 'bodyHit':
+        this.sfx.bonk(pan(e.p));
+        break;
+      default:
+        break;
+    }
+  }
+
+  private endReplay(): void {
+    this.replay = null;
+    this.renderer.endReplay();
+    this.hud.setBadge('');
   }
 
   private draw(alpha: number): void {
@@ -257,9 +360,23 @@ export class GameView {
   }
 
   private onEvent(e: MatchEvent): void {
+    if (
+      e.type === 'hit' ||
+      e.type === 'bounce' ||
+      e.type === 'net' ||
+      e.type === 'floor' ||
+      e.type === 'sideHit' ||
+      e.type === 'bodyHit'
+    )
+      this.recorder.event(e);
+    if (e.type === 'toss') {
+      this.gamePointBefore = this.sim.scoring.gamePointFor !== null;
+      this.lastHit = null;
+    }
     const pan = (p: { x: number }) => p.x / 1.5;
     switch (e.type) {
       case 'hit': {
+        this.lastHit = { side: e.side, smash: e.smash };
         this.sfx.hit(Math.min(1, e.speed / 15), pan(e.p), e.smash || !!e.powerServe);
         this.renderer.hitEffect(e.p, e.smash || !!e.powerServe);
         if (e.powerServe) this.hud.flash('强力发球!', '', 0.9, 'big');
@@ -293,6 +410,19 @@ export class GameView {
         // 得分：回声收掉、全场欢呼，再慢慢回到平时的低语
         const hit = e.reason === 'face' || e.reason === 'body';
         this.lastPointHit = hit;
+        // 精彩的分：欢呼一会儿后回放
+        if (
+          isHighlight({
+            rallyHits: e.rallyHits,
+            reason: e.reason,
+            smashWinner: !!this.lastHit?.smash && this.lastHit.side === e.winner,
+            gamePoint: this.gamePointBefore,
+            gameOver: this.sim.scoring.result !== null,
+          })
+        ) {
+          this.replayPoint = e.t;
+          this.replayAt = e.t + REPLAY.delay;
+        }
         this.sfx.setEcho(0);
         this.sfx.crowd('cheer', e.rallyHits >= 8 ? 1 : 0.6);
         this.sfx.setCrowd(CROWD.calm, 0, 1.5);

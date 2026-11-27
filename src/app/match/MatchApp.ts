@@ -426,6 +426,10 @@ export class MatchApp {
       return;
     }
     if (step !== 'play' || this.paused || e.repeat) return;
+    if ((k === ' ' || k === 'enter') && this.view.skipReplay()) {
+      e.preventDefault();
+      return;
+    }
     if (k === ' ') {
       e.preventDefault();
       if (!this.tryToss('key', this.sim.tune.serve.buttonTossHeight)) this.sim.skipBetweenPoints();
@@ -479,6 +483,8 @@ export class MatchApp {
       if (b === 'confirm') this.resume();
       return;
     }
+    // A：正在回放（或马上要回放）就跳过
+    if (b === 'confirm' && this.view.skipReplay()) return;
     if (b === 'recenter') {
       const head = deviceWords(this.input.active).head;
       if (this.input.recenter()) this.view.hud.flash('已回中', '', 0.8);

@@ -6,7 +6,7 @@
 import type * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
 import { AvatarMotion, type AvatarReaction } from './avatar/motion';
-import type { AvatarBody } from './avatar/types';
+import type { AvatarBody, AvatarPose } from './avatar/types';
 import type { PaddlePose } from './paddlePose';
 
 type Copy = 'ghost' | 'solid';
@@ -21,6 +21,8 @@ export class AvatarView {
   };
   /** 场上有没有这个人（发球机练习时远端没有人） */
   private present = true;
+  /** 这一帧摆的姿势（回放录这个） */
+  private pose: AvatarPose | null = null;
 
   /** make(true) = 半透明的那份 */
   constructor(
@@ -82,6 +84,16 @@ export class AvatarView {
     const pose = this.motion.update(body, facing, shoulderSide, paddle, dt, ball, cowering);
     for (const b of this.shown) b.apply(pose);
     this.paddlePos = pose.paddle.pos;
+    this.pose = pose;
+  }
+
+  get lastPose(): AvatarPose | null {
+    return this.pose;
+  }
+
+  /** 回放：直接摆成录下来的姿势（不经过动作计算，回放完接着正常动） */
+  applyPose(pose: AvatarPose): void {
+    for (const b of this.shown) b.apply(pose);
   }
 
   get paddlePosition(): Vec3 {

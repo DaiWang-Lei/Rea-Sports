@@ -95,6 +95,11 @@ export class BallView {
     root.add(this.trail);
   }
 
+  /** 清掉拖尾（回放开始、结束时：时间跳了） */
+  clearTrail(): void {
+    this.history.length = 0;
+  }
+
   update(p: Vec3, t: number, visible: boolean): void {
     this.ball.visible = visible;
     this.shadow.visible = visible;

@@ -14,6 +14,7 @@ import { BallMachineView } from './BallMachineView';
 import { type BallSpin, BallView, type TrailStyle } from './BallView';
 import { Crowd } from './Crowd';
 import { Effects, type ServeCue } from './Effects';
+import type { ReplayFrame } from './Replay';
 import type { PaddlePose } from './paddlePose';
 import { buildScenery, SKY } from './Scenery';
 
@@ -26,6 +27,13 @@ export const CAMERA = { y: -4.1, z: 2.75, lookY: 0.3, lookZ: -0.05, fov: 40 };
 export const SPLIT_CAMERA = { y: -4.4, z: 3.0, lookY: 0.2, lookZ: -0.1, fov: 55, follow: 0.7 };
 /** 分屏时只在一边半屏里画的东西所在的层 */
 const VIEW_LAYER: Record<Side, number> = { near: 1, far: 2 };
+/** 回放时两个人不透明的那份所在的层（回放镜头只看这一层和公共的 0 层） */
+const REPLAY_LAYER = 3;
+/**
+ * 回放镜头：球台侧面的转播机位，离球台中线 x 米、高 z 米，稍微跟着球前后走（follow、look 是跟随比例，
+ * tau 是平滑的时间常数，秒）。拉得够远，两头的人都在画面里
+ */
+const REPLAY_CAMERA = { x: 4.6, z: 1.75, follow: 0.3, look: 0.5, fov: 45, tau: 0.25 };
 
 export const SIM_TO_THREE = new THREE.Quaternion().setFromAxisAngle(
   new THREE.Vector3(1, 0, 0),
@@ -84,6 +92,13 @@ export class Renderer {
   private readonly effects: Effects;
   private readonly camX: Record<Side, number> = { near: 0, far: 0 };
   private lastT = 0;
+  /** 上一帧画面上的东西（回放录这个） */
+  private shown: Omit<ReplayFrame, 'poses'> | null = null;
+  private present: Record<Side, boolean> = { near: false, far: false };
+  /** 回放：镜头、镜头前后跟的位置、回放前的时刻（回放完恢复） */
+  private readonly replayCam = new THREE.PerspectiveCamera(REPLAY_CAMERA.fov, 16 / 9, 0.05, 60);
+  private replayY = 0;
+  private liveT = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -109,6 +124,7 @@ export class Renderer {
       far: new AvatarView(this.root, (t) => createAvatarBody(who.far, t)),
     };
     for (const side of SIDES) this.cameras[side].layers.enable(VIEW_LAYER[side]);
+    this.replayCam.layers.enable(REPLAY_LAYER);
     this.machine = new BallMachineView(this.root);
     this.effects = new Effects(this.root);
     this.setSplit(false);
@@ -170,8 +186,16 @@ export class Renderer {
     this.ballView.spin = frame.spin;
     this.ballView.update(frame.ball, frame.t, frame.ballVisible);
 
+    this.shown = {
+      t: frame.t,
+      ball: { ...frame.ball },
+      ballVisible: frame.ballVisible,
+      trail: frame.trail,
+      spin: { ...frame.spin },
+    };
     for (const side of SIDES) {
       const rp = frame.players[side];
+      this.present[side] = !!rp;
       this.avatars[side].visible = !!rp;
       if (rp)
         this.avatars[side].update(
@@ -226,6 +250,62 @@ export class Renderer {
     }
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, w, h);
+  }
+
+  /** 上一帧画面上的东西（回放录这个；姿势复制一份，之后还会变） */
+  snapshot(): ReplayFrame | null {
+    if (!this.shown) return null;
+    const poses: ReplayFrame['poses'] = {};
+    for (const side of SIDES) {
+      const p = this.avatars[side].lastPose;
+      if (this.present[side] && p) poses[side] = structuredClone(p);
+    }
+    return { ...this.shown, poses };
+  }
+
+  /** 开始回放：两个人都画不透明的那份，只给回放镜头看 */
+  beginReplay(start: ReplayFrame): void {
+    this.liveT = this.lastT;
+    for (const side of SIDES) this.avatars[side].show(null, REPLAY_LAYER);
+    this.ballView.clearTrail();
+    this.replayY = start.ball.y;
+  }
+
+  /** 回放的一帧：摆成录下来的样子，从球台侧面的转播机位全屏画 */
+  renderReplay(f: ReplayFrame, dtReal: number): void {
+    this.lastT = f.t;
+    this.ballView.style = f.trail;
+    this.ballView.spin = f.spin;
+    this.ballView.update(f.ball, f.t, f.ballVisible);
+    for (const side of SIDES) {
+      const pose = f.poses[side];
+      this.avatars[side].visible = !!pose;
+      if (pose) this.avatars[side].applyPose(pose);
+    }
+    this.crowd.update(f.t);
+    this.effects.update(f.t);
+    this.effects.serveCue(null, f.t);
+
+    const c = REPLAY_CAMERA;
+    this.replayY += (f.ball.y - this.replayY) * (1 - Math.exp(-dtReal / c.tau));
+    const cam = this.replayCam;
+    toThree({ x: c.x, y: c.follow * this.replayY, z: c.z }, cam.position);
+    cam.lookAt(toThree({ x: 0, y: c.look * this.replayY, z: TABLE.height + 0.15 }));
+    const canvas = this.renderer.domElement;
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
+    cam.aspect = w / h;
+    cam.updateProjectionMatrix();
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, w, h);
+    this.renderer.render(this.scene, cam);
+  }
+
+  /** 回放结束：回到比赛的样子 */
+  endReplay(): void {
+    this.lastT = this.liveT;
+    this.setSplit(this.split);
+    this.ballView.clearTrail();
   }
 
   /** 这一边的镜头：在这个人身后，横向跟着他走（平滑）；kick = 扣杀顿挫，镜头和看的点一起挪（平移，不转） */

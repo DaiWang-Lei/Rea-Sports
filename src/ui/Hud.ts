@@ -14,6 +14,7 @@ export class Hud {
   private readonly sub: HTMLDivElement;
   private readonly corner: HTMLDivElement;
   private readonly hint: HTMLDivElement;
+  private readonly badge: HTMLDivElement;
   private messageTimer = 0;
 
   constructor(
@@ -26,13 +27,15 @@ export class Hud {
       <div class="hud-score"></div>
       <div class="hud-center"><div class="hud-msg"></div><div class="hud-sub"></div></div>
       <div class="hud-corner"></div>
-      <div class="hud-hint"></div>`;
+      <div class="hud-hint"></div>
+      <div class="hud-badge"></div>`;
     parent.appendChild(this.el);
     this.score = this.el.querySelector('.hud-score')!;
     this.message = this.el.querySelector('.hud-msg')!;
     this.sub = this.el.querySelector('.hud-sub')!;
     this.corner = this.el.querySelector('.hud-corner')!;
     this.hint = this.el.querySelector('.hud-hint')!;
+    this.badge = this.el.querySelector('.hud-badge')!;
   }
 
   setNames(names: HudNames): void {
@@ -81,6 +84,12 @@ export class Hud {
 
   setCorner(html: string): void {
     this.corner.innerHTML = html;
+  }
+
+  /** 左上角的角标（回放中）；空字符串 = 收起 */
+  setBadge(title: string, sub = ''): void {
+    if (title) this.badge.innerHTML = `<b>${title}</b>${sub ? `<small>${sub}</small>` : ''}`;
+    this.badge.classList.toggle('visible', !!title);
   }
 
   setHint(text: string): void {

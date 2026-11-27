@@ -143,3 +143,8 @@
   width: 132px;
   height: 132px;
 }
+
+.replaying .vs-divider,
+.replaying .vs-half {
+  visibility: hidden;
+}

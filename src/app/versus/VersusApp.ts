@@ -302,6 +302,8 @@ export class VersusApp {
     this.input.tossEnabled = playing && SIDES.some((s) => this.sim.human(s)!.canToss(this.sim));
     this.view.paused = !playing;
     this.view.frame(dt);
+    // 回放是全屏一个画面：分屏线和两边的小字先藏起来
+    this.layer.classList.toggle('replaying', this.view.replaying);
     this.clockSim = this.sim.t;
     this.clockReal = now - this.view.lag * 1000;
     this.checkDevices(now);
@@ -388,6 +390,8 @@ export class VersusApp {
       if (b === 'confirm') this.resume();
       return;
     }
+    // A：正在回放（或马上要回放）就跳过
+    if (b === 'confirm' && this.view.skipReplay()) return;
     if (b === 'recenter') {
       this.input.requestCalibration(d);
       return;
@@ -403,8 +407,10 @@ export class VersusApp {
     const k = e.key.toLowerCase();
     if (k === 'escape' || k === 'p') {
       if (this.step === 'play') this.togglePause();
-    } else if (k === 'enter') {
-      if (this.step === 'lobby' && this.bothJoined) this.startGame();
+    } else if (k === 'enter' || k === ' ') {
+      if (this.step === 'play' && !this.paused) this.view.skipReplay();
+      else if (k === ' ') return;
+      else if (this.step === 'lobby' && this.bothJoined) this.startGame();
       else if (this.step === 'over') this.startGame();
     }
   }
