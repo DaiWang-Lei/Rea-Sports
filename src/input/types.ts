@@ -65,6 +65,9 @@ export function emptyButtons(): Buttons {
  * - pause：暂停（R: +，L: −）
  * - players：对打里切换 1 人 / 2 人（R: X，L: ←）
  */
+/** 菜单里的方向（摇杆推到底、方向键、手机方向键、键盘方向键） */
+export type NavDir = 'up' | 'down' | 'left' | 'right';
+
 export type LogicalButton = 'confirm' | 'back' | 'recenter' | 'pause' | 'players';
 
 export const LOGICAL_MAP: Record<JoyConSide, Record<LogicalButton, ButtonName[]>> = {

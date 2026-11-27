@@ -1,0 +1,774 @@
+/*
+ * 电视界面（像 WSR 那样明亮清爽）：天蓝渐变、白色大圆角卡片、柔和阴影、橙黄点缀。
+ * 尺寸都按屏幕高度（vh）算，坐在沙发上看得清；四周留出电视安全边距。
+ * 焦点（摇杆 / 方向键选中的那一项）：放大一点、粗描边、轻轻弹一下。
+ */
+
+/* 一屏：铺满画面，内容在安全边距里 */
+.tv-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5vh 5vw 11vh;
+  box-sizing: border-box;
+  font-family: var(--tv-font);
+  color: var(--tv-ink);
+  user-select: none;
+  animation: tv-in 0.28s ease-out;
+}
+
+/* 菜单叠在 3D 球场上：上下压一层天色，中间透出球场 */
+.tv-screen.tv-sky {
+  background: linear-gradient(
+    180deg,
+    rgba(94, 200, 255, 0.92) 0%,
+    rgba(160, 222, 255, 0.55) 38%,
+    rgba(216, 242, 255, 0.35) 62%,
+    rgba(216, 242, 255, 0.9) 100%
+  );
+}
+
+.tv-screen.tv-dim {
+  background: rgba(18, 50, 86, 0.45);
+}
+
+@keyframes tv-in {
+  from {
+    opacity: 0;
+    transform: translateY(1.5vh);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.tv-title {
+  margin: 0 0 1vh;
+  font-size: 6.5vh;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow:
+    0 0.4vh 0 rgba(18, 62, 112, 0.35),
+    0 1vh 3vh rgba(18, 62, 112, 0.35);
+}
+
+.tv-sub {
+  margin: 0 0 4vh;
+  font-size: 2.8vh;
+  font-weight: 600;
+  color: var(--tv-ink);
+  opacity: 0.85;
+}
+
+/* 一排大卡片（选玩法、选人物） */
+.tv-row {
+  display: flex;
+  gap: 3vw;
+  justify-content: center;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.tv-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1.2vh;
+  width: 26vh;
+  min-height: 30vh;
+  padding: 3vh 2vh;
+  box-sizing: border-box;
+  border: none;
+  border-radius: var(--tv-radius);
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  font-family: var(--tv-font);
+  cursor: pointer;
+  transition:
+    transform 0.15s ease-out,
+    box-shadow 0.15s ease-out;
+}
+
+.tv-card .tv-icon {
+  width: 13vh;
+  height: 13vh;
+}
+
+.tv-card b {
+  font-size: 3.6vh;
+  font-weight: 900;
+}
+
+.tv-card span {
+  font-size: 2vh;
+  line-height: 1.45;
+  color: var(--tv-ink-dim);
+  text-align: center;
+}
+
+/* 大按钮（暂停菜单、结算） */
+.tv-btn {
+  min-width: 34vh;
+  padding: 1.8vh 4vh;
+  border: none;
+  border-radius: 999px;
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  font-family: var(--tv-font);
+  font-size: 3vh;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.15s ease-out;
+}
+
+.tv-btn.tv-primary {
+  background: linear-gradient(180deg, #ffb547, var(--tv-accent));
+  color: #fff;
+  text-shadow: 0 0.2vh 0 rgba(140, 70, 0, 0.35);
+}
+
+.tv-small-btn {
+  padding: 1.2vh 2.6vh;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  font-family: var(--tv-font);
+  font-size: 2.2vh;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* 焦点 */
+.tv-focused {
+  transform: scale(1.06) translateY(-0.6vh);
+  box-shadow:
+    0 0 0 0.6vh var(--tv-accent),
+    0 1.6vh 4vh rgba(18, 62, 112, 0.3);
+  animation: tv-pop 0.22s ease-out;
+}
+
+@keyframes tv-pop {
+  0% {
+    transform: scale(1);
+  }
+  60% {
+    transform: scale(1.09) translateY(-0.8vh);
+  }
+  100% {
+    transform: scale(1.06) translateY(-0.6vh);
+  }
+}
+
+.tv-disabled {
+  opacity: 0.45;
+}
+
+/* 底部按键提示：Ⓐ 确定　Ⓑ 返回 */
+.tv-hints {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3.5vh;
+  display: flex;
+  justify-content: center;
+  gap: 4vw;
+  font-family: var(--tv-font);
+  font-size: 2.4vh;
+  font-weight: 700;
+  color: var(--tv-ink);
+  pointer-events: none;
+}
+
+/* 叠在比赛画面上（压暗的背景）：按键提示用白字 */
+.tv-dim .tv-hints {
+  color: #fff;
+  text-shadow: 0 0.2vh 0.6vh rgba(0, 0, 0, 0.45);
+}
+
+.tv-dim .tv-key {
+  background: #fff;
+  color: var(--tv-ink);
+  text-shadow: none;
+}
+
+.tv-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.6vh;
+  height: 3.6vh;
+  margin-right: 0.8vh;
+  border-radius: 50%;
+  background: var(--tv-ink);
+  color: #fff;
+  font-size: 2vh;
+  font-weight: 900;
+  vertical-align: middle;
+}
+
+.tv-key.tv-key-wide {
+  width: auto;
+  padding: 0 1.2vh;
+  border-radius: 999px;
+}
+
+/* 开机画面 */
+.tv-logo {
+  margin-top: 16vh;
+  font-size: 13vh;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow:
+    0 0.8vh 0 #ff9f1c,
+    0 1.6vh 4vh rgba(18, 62, 112, 0.45);
+}
+
+.tv-press {
+  margin-top: 8vh;
+  padding: 1.6vh 5vh;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--tv-shadow);
+  font-size: 3.4vh;
+  font-weight: 800;
+  animation: tv-blink 1.6s ease-in-out infinite;
+}
+
+@keyframes tv-blink {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.tv-footnote {
+  position: absolute;
+  bottom: 3vh;
+  font-size: 1.9vh;
+  color: var(--tv-ink-dim);
+}
+
+/* 谁来玩：两个大位置 */
+.tv-slots {
+  display: flex;
+  gap: 4vw;
+  margin-bottom: 4vh;
+}
+
+.tv-slot {
+  width: 40vh;
+  min-height: 26vh;
+  padding: 3vh;
+  box-sizing: border-box;
+  border-radius: var(--tv-radius);
+  background: rgba(255, 255, 255, 0.55);
+  border: 0.5vh dashed rgba(23, 50, 77, 0.25);
+  text-align: center;
+  font-size: 2.4vh;
+}
+
+.tv-slot.joined {
+  background: var(--tv-card);
+  border-style: solid;
+  box-shadow: var(--tv-shadow);
+}
+
+.tv-slot.p1.joined {
+  border-color: var(--tv-p1);
+}
+
+.tv-slot.p2.joined {
+  border-color: var(--tv-p2);
+}
+
+.tv-slot-tag {
+  font-size: 6vh;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.tv-slot.p1 .tv-slot-tag {
+  color: var(--tv-p1);
+}
+
+.tv-slot.p2 .tv-slot-tag {
+  color: var(--tv-p2);
+}
+
+.tv-slot-dev {
+  margin-top: 1.2vh;
+  font-size: 2.6vh;
+  font-weight: 800;
+}
+
+.tv-slot-tip {
+  margin-top: 1.2vh;
+  color: var(--tv-ink-dim);
+  line-height: 1.5;
+}
+
+.tv-slot .ok {
+  color: var(--tv-good);
+  font-weight: 800;
+}
+
+.tv-slot .warn {
+  color: #d98b00;
+  font-weight: 800;
+}
+
+/* 选人物：一排人物卡，每个玩家一个颜色的框 */
+.tv-chars {
+  display: grid;
+  grid-template-columns: repeat(6, 18vh);
+  gap: 2vh;
+}
+
+.tv-char {
+  position: relative;
+  padding: 1.2vh 1vh 1.6vh;
+  border-radius: var(--tv-radius);
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
+  text-align: center;
+  font-size: 2.2vh;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.15s ease-out;
+}
+
+.tv-char img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 1.6vh;
+  background: var(--tv-card-2);
+}
+
+.tv-char.cur-p1 {
+  box-shadow:
+    0 0 0 0.6vh var(--tv-p1),
+    var(--tv-shadow);
+  transform: translateY(-0.6vh);
+}
+
+.tv-char.cur-p2 {
+  box-shadow:
+    0 0 0 0.6vh var(--tv-p2),
+    var(--tv-shadow);
+  transform: translateY(-0.6vh);
+}
+
+.tv-char.cur-p1.cur-p2 {
+  box-shadow:
+    0 0 0 0.6vh var(--tv-p1),
+    0 0 0 1.2vh var(--tv-p2),
+    var(--tv-shadow);
+}
+
+.tv-char-badges {
+  position: absolute;
+  top: -1.4vh;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 0.6vh;
+}
+
+.tv-badge {
+  padding: 0.2vh 1vh;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 1.8vh;
+  font-weight: 900;
+}
+
+.tv-badge.p1 {
+  background: var(--tv-p1);
+}
+
+.tv-badge.p2 {
+  background: var(--tv-p2);
+}
+
+.tv-badge.locked::after {
+  content: ' ✓';
+}
+
+/* 右上角的小按钮（设置、换人） */
+.tv-corner {
+  position: absolute;
+  top: 4vh;
+  right: 4vw;
+  display: flex;
+  gap: 1.5vw;
+}
+
+/* 用手机玩：二维码卡片 */
+.tv-qr {
+  display: flex;
+  gap: 3vw;
+  align-items: center;
+  padding: 3vh 4vh;
+  border-radius: var(--tv-radius);
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
+  font-size: 2.3vh;
+  line-height: 1.6;
+  text-align: left;
+}
+
+.tv-qr canvas {
+  width: 24vh;
+  height: 24vh;
+  border-radius: 1.2vh;
+}
+
+/* 叠在画面上的面板：居中的白色大卡片 */
+.tv-overlay {
+  justify-content: center;
+}
+
+.tv-overlay[hidden] {
+  display: none;
+}
+
+.tv-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.6vh;
+  width: min(70vh, 90vw);
+  max-height: 100%;
+  padding: 4vh 4.5vh;
+  box-sizing: border-box;
+  border-radius: calc(var(--tv-radius) * 1.4);
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  overflow: hidden;
+}
+
+.tv-panel.tv-wide {
+  width: min(110vh, 92vw);
+}
+
+.tv-panel h2 {
+  margin: 0;
+  font-size: 5vh;
+  font-weight: 900;
+  text-align: center;
+}
+
+.tv-panel .tv-note {
+  margin: 0;
+  font-size: 2.2vh;
+  color: var(--tv-ink-dim);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.tv-panel .tv-btn {
+  min-width: 0;
+}
+
+.tv-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 1.4vh;
+  margin-top: 1vh;
+}
+
+.tv-buttons.tv-inline {
+  flex-direction: row;
+  justify-content: center;
+}
+
+/* 一排并列的按钮：平分宽度，但不窄过自己的字（不折行） */
+.tv-buttons.tv-inline .tv-btn {
+  flex: 1 1 0;
+  min-width: max-content;
+  padding-inline: 3vh;
+  white-space: nowrap;
+}
+
+/* 「◀ 值 ▶」一行设置 */
+.tv-spin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2vh;
+  padding: 1.4vh 2.4vh;
+  border-radius: 999px;
+  background: var(--tv-card-2);
+  font-size: 2.8vh;
+  font-weight: 800;
+  cursor: default;
+  transition: transform 0.15s ease-out;
+}
+
+.tv-spin-label {
+  color: var(--tv-ink-dim);
+}
+
+.tv-spin-val {
+  display: flex;
+  align-items: center;
+  gap: 1.6vh;
+}
+
+.tv-spin-val i {
+  font-style: normal;
+  font-size: 2.2vh;
+  color: var(--tv-accent);
+  cursor: pointer;
+  opacity: 0.35;
+}
+
+.tv-spin.tv-focused .tv-spin-val i {
+  opacity: 1;
+}
+
+.tv-spin-val b {
+  min-width: 14vh;
+  text-align: center;
+}
+
+/* 对阵画面：你 VS 对手 */
+.tv-vs {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 3vh;
+}
+
+.tv-vs-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8vh;
+  text-align: center;
+}
+
+.tv-vs-side b {
+  font-size: 4.4vh;
+  font-weight: 900;
+}
+
+.tv-vs-side span:not(.tv-tag) {
+  font-size: 2.2vh;
+  color: var(--tv-ink-dim);
+}
+
+.tv-vs-side small {
+  font-size: 1.9vh;
+  color: var(--tv-ink-dim);
+  line-height: 1.4;
+}
+
+.tv-vs-mid {
+  font-size: 6vh;
+  font-weight: 900;
+  color: var(--tv-accent);
+  text-shadow: 0 0.4vh 0 rgba(140, 70, 0, 0.25);
+}
+
+.tv-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16vh;
+  height: 16vh;
+  border-radius: 50%;
+  background: var(--tv-card-2);
+  box-shadow: inset 0 0 0 0.6vh var(--tv-p1);
+  overflow: hidden;
+  font-size: 7vh;
+  font-weight: 900;
+  color: #fff;
+}
+
+.tv-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tv-face.opp {
+  box-shadow: inset 0 0 0 0.6vh var(--tv-p2);
+}
+
+.tv-tag {
+  display: inline-block;
+  padding: 0.3vh 1.4vh;
+  border-radius: 999px;
+  font-size: 1.9vh;
+  font-weight: 800;
+  color: #fff;
+  background: var(--tv-good);
+}
+
+.tv-tag.warn {
+  background: #d98b00;
+}
+
+.tv-tag.gold {
+  background: linear-gradient(180deg, #ffd166, #ff9f1c);
+  color: #3b2a00;
+}
+
+/* 结算：大字胜负、比分、几行数、熟练度折线 */
+.tv-result {
+  font-size: 7vh !important;
+}
+
+.tv-result.win {
+  color: var(--tv-good);
+}
+
+.tv-result.lose {
+  color: var(--tv-bad);
+}
+
+.tv-score {
+  text-align: center;
+  font-size: 3vh;
+  font-weight: 800;
+  color: var(--tv-ink-dim);
+}
+
+.tv-score b {
+  padding: 0 1.4vh;
+  font-size: 7vh;
+  color: var(--tv-ink);
+}
+
+.tv-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8vh;
+  padding: 1.6vh 2.4vh;
+  border-radius: 2vh;
+  background: var(--tv-card-2);
+  font-size: 2.4vh;
+}
+
+.tv-stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 2vh;
+}
+
+.tv-stats span {
+  color: var(--tv-ink-dim);
+}
+
+.tv-chart {
+  width: 100%;
+  height: 10vh;
+}
+
+/* 怎么玩：示意图 + 几步 */
+.tv-howto {
+  display: grid;
+  grid-template-columns: 26vh 1fr;
+  gap: 3vh;
+  align-items: center;
+}
+
+.tv-howto svg {
+  width: 26vh;
+  height: 26vh;
+}
+
+.tv-howto ol {
+  margin: 0;
+  padding-left: 3vh;
+  font-size: 2.5vh;
+  line-height: 1.7;
+}
+
+/* 连接页：左边用手机（二维码），右边用 Joy-Con / 键盘 */
+.tv-setup {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2.4vh;
+}
+
+.tv-setup-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1vh;
+  padding: 2vh 2.4vh;
+  border-radius: var(--tv-radius);
+  background: var(--tv-card-2);
+  text-align: center;
+}
+
+.tv-setup-box h3 {
+  margin: 0;
+  font-size: 3vh;
+  font-weight: 900;
+}
+
+.tv-setup-box canvas {
+  width: 17vh;
+  height: 17vh;
+  border-radius: 1.4vh;
+  background: #fff;
+}
+
+.tv-setup-box ol {
+  margin: 0;
+  padding-left: 2.6vh;
+  font-size: 1.9vh;
+  line-height: 1.6;
+  text-align: left;
+  color: var(--tv-ink-dim);
+}
+
+.tv-setup-box .tv-btn {
+  align-self: stretch;
+}
+
+.tv-link {
+  font-size: 2vh;
+  font-weight: 800;
+}
+
+.tv-link.ok {
+  color: var(--tv-good);
+}
+
+.tv-link.warn {
+  color: #d98b00;
+}
+
+/* 手柄列表（设置里） */
+.tv-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8vh;
+  font-size: 2.3vh;
+}
+
+.tv-devices div {
+  display: flex;
+  justify-content: space-between;
+  padding: 1vh 2vh;
+  border-radius: 1.6vh;
+  background: var(--tv-card-2);
+}

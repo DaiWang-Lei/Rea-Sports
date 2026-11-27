@@ -11,121 +11,141 @@
 .pr-swing {
   position: absolute;
   pointer-events: none;
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  font-family: var(--tv-font);
+  color: var(--tv-ink);
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
 }
 
+/* 左上角：回进几球、连续几球（大数字），下面一行难度和送球区域 */
 .pr-stats {
   top: 2.5vh;
   left: 2vw;
-  font-size: 2.1vh;
-  line-height: 1.6;
-  background: rgba(10, 16, 24, 0.55);
-  border-radius: 10px;
-  padding: 1vh 1.2vw;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.4vh 2.4vh;
+  padding: 1.4vh 2.2vh;
+  border-radius: var(--tv-radius);
 }
 
-.pr-title {
+.pr-stats[hidden] {
+  display: none;
+}
+
+.pr-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8vh;
+}
+
+.pr-stat span {
+  font-size: 2vh;
   font-weight: 700;
-  color: #f5c542;
+  color: var(--tv-ink-dim);
 }
 
+.pr-stat b {
+  font-size: 5vh;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-stat small {
+  font-size: 1.8vh;
+  color: var(--tv-ink-dim);
+}
+
+.pr-stat-mode {
+  grid-column: 1 / -1;
+  font-size: 1.8vh;
+  font-weight: 700;
+  color: var(--tv-ink-dim);
+}
+
+/* 右上角：这一球怎么样 */
 .pr-card {
   top: 2.5vh;
   right: 2vw;
-  width: min(30vw, 360px);
-  font-size: 2vh;
-  background: rgba(10, 16, 24, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 12px;
-  padding: 1.2vh 1.2vw;
+  width: min(30vw, 380px);
+  padding: 1.6vh 2.2vh;
+  border-radius: var(--tv-radius);
+  font-size: 2.2vh;
   opacity: 0;
-  transition: opacity 0.25s;
+  transform: translateY(-1vh);
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
 }
 
 .pr-card.show {
   opacity: 1;
+  transform: none;
 }
 
 .pr-card-title {
-  font-size: 3.2vh;
-  font-weight: 800;
-  margin-bottom: 0.6vh;
+  font-size: 4vh;
+  font-weight: 900;
+  line-height: 1.2;
 }
 
 .pr-card-title.ok {
-  color: #7cf0b0;
-}
-
-.pr-progress {
-  height: 1.2vh;
-  min-height: 8px;
-  margin: 1.6vh 0 0.8vh;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  overflow: hidden;
-}
-
-.pr-progress i {
-  display: block;
-  width: 0;
-  height: 100%;
-  background: #7cf0b0;
-  transition: width 0.1s linear;
-}
-
-.pr-rec {
-  color: #ff9a8a;
-  font-weight: 600;
+  color: var(--tv-good);
 }
 
 .pr-card-title.bad {
-  color: #ff9a8a;
+  color: var(--tv-bad);
 }
 
-.pr-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 1vw;
-  padding: 0.3vh 0;
+.pr-card-timing {
+  margin-top: 0.4vh;
+  font-size: 2.6vh;
+  font-weight: 800;
 }
 
-.pr-row span,
-.dim {
-  opacity: 0.7;
+.pr-card-shot {
+  font-weight: 700;
+}
+
+.pr-card-feed {
+  margin-top: 0.4vh;
+  font-size: 1.8vh;
+  color: var(--tv-ink-dim);
 }
 
 .pr-gauge {
   position: relative;
-  height: 1.4vh;
-  margin: 0.6vh 0 1.8vh;
+  height: 1.6vh;
+  margin: 1vh 0 2.4vh;
   border-radius: 1vh;
   background: linear-gradient(
     90deg,
-    #ff7b6b 0%,
-    #f5c542 25%,
-    #7cf0b0 42%,
-    #7cf0b0 58%,
-    #f5c542 75%,
-    #ff7b6b 100%
+    #ff8a7a 0%,
+    #ffd166 25%,
+    #5fd99a 42%,
+    #5fd99a 58%,
+    #ffd166 75%,
+    #ff8a7a 100%
   );
 }
 
 .pr-gauge em {
   position: absolute;
-  top: -0.5vh;
-  width: 0.5vh;
-  height: 2.4vh;
-  margin-left: -0.25vh;
-  background: #fff;
-  border-radius: 0.3vh;
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+  top: -0.6vh;
+  width: 0.8vh;
+  height: 2.8vh;
+  margin-left: -0.4vh;
+  background: var(--tv-ink);
+  border: 0.3vh solid #fff;
+  border-radius: 0.6vh;
+  box-sizing: border-box;
 }
 
 .pr-gauge small {
   position: absolute;
-  top: 1.6vh;
-  font-size: 1.5vh;
-  opacity: 0.7;
+  top: 2vh;
+  font-size: 1.6vh;
+  color: var(--tv-ink-dim);
 }
 
 .pr-gauge small.l {
@@ -136,18 +156,20 @@
   right: 0;
 }
 
+/* 开发用：左下角设备状态、右下角挥拍速度 */
 .pr-status {
   left: 2vw;
   bottom: 2.5vh;
   font-size: 1.7vh;
   line-height: 1.6;
   max-width: 60vw;
-  background: rgba(10, 16, 24, 0.55);
-  border-radius: 8px;
+  border-radius: 1.2vh;
   padding: 0.6vh 1vw;
 }
 
-.pr-status:empty {
+.pr-status:empty,
+.pr-status[hidden],
+.pr-swing[hidden] {
   display: none;
 }
 
@@ -155,9 +177,9 @@
   right: 2vw;
   bottom: 2.5vh;
   font-size: 2vh;
-  background: rgba(10, 16, 24, 0.6);
-  border-radius: 8px;
-  padding: 0.8vh 1.2vw;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.8vh 1.4vw;
   opacity: 0;
   transition: opacity 0.25s;
 }
@@ -166,140 +188,11 @@
   opacity: 0.95;
 }
 
-.pr-overlay,
-.pr-pause {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(8, 12, 18, 0.72);
-  overflow: auto;
-  padding: 16px;
+.pr-rec {
+  color: var(--tv-bad);
+  font-weight: 600;
 }
 
-.pr-overlay[hidden],
-.pr-pause[hidden] {
-  display: none;
-}
-
-.pr-panel {
-  width: min(860px, 100%);
-  max-height: 100%;
-  overflow: auto;
-  background: var(--panel, #161d26);
-  border: 1px solid var(--border, #2a3442);
-  border-radius: 14px;
-  padding: 20px 24px;
-  font-size: 16px;
-  line-height: 1.7;
-  text-shadow: none;
-}
-
-.pr-panel h2 {
-  margin: 0 0 12px;
-  font-size: 22px;
-}
-
-.pr-panel h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
-}
-
-.pr-gap {
-  margin-top: 18px !important;
-}
-
-.pr-big {
-  font-size: 20px;
-}
-
-.pr-connect {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-}
-
-@media (max-width: 720px) {
-  .pr-connect {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.pr-box {
-  background: var(--panel-2, #1d2631);
-  border: 1px solid var(--border, #2a3442);
-  border-radius: 10px;
-  padding: 12px 14px;
-}
-
-.pr-qr {
-  display: block;
-  width: 180px;
-  height: 180px;
-  background: #fff;
-  border-radius: 8px;
-  margin-bottom: 8px;
-}
-
-.pr-steps {
-  margin: 0;
-  padding-left: 20px;
-  font-size: 14px;
-}
-
-.pr-link {
-  font-size: 14px;
-  margin-top: 6px;
-}
-
-.pr-link.ok {
-  color: #7cf0b0;
-}
-
-.pr-link.warn {
-  color: #f5c542;
-}
-
-.pr-room {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #f5c542;
-}
-
-.pr-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.pr-setting {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px dashed var(--border, #2a3442);
-}
-
-.pr-setting > span:first-child {
-  min-width: 7em;
-  opacity: 0.75;
-}
-
-.pr-setting button.on {
-  background: var(--accent, #34c38f);
-  border-color: var(--accent, #34c38f);
-  color: #06140e;
-}
-
-.pr-lat {
-  min-width: 4.5em;
-  text-align: center;
-}
-
-.small {
-  font-size: 13px;
+.dim {
+  opacity: 0.7;
 }

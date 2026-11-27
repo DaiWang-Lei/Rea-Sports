@@ -38,6 +38,9 @@ export const GYRO_RANGE_DPS = 2000;
 export const SPI_FACTORY_IMU_CAL = 0x6020; // 0x18 字节
 export const SPI_USER_IMU_CAL_MAGIC = 0x8026; // 2 字节魔数 0xB2 0xA1，紧接 0x18 字节数据
 export const USER_CAL_MAGIC = [0xb2, 0xa1] as const;
+/** 摇杆校准（9 字节）：出厂的；用户在主机上校准过的在前面多 2 字节魔数 */
+export const SPI_FACTORY_STICK_CAL = { L: 0x603d, R: 0x6046 } as const;
+export const SPI_USER_STICK_CAL = { L: 0x8010, R: 0x801b } as const;
 
 /** 两侧马达都静止的震动数据 */
 export const NEUTRAL_RUMBLE: readonly number[] = [0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40];
@@ -84,8 +87,18 @@ export interface FullReport {
   battery: number;
   charging: boolean;
   buttonBytes: [number, number, number];
+  /** 摇杆原始读数（12 位，0..4095，中间约 2048；向右、向上变大）：左摇杆（Joy-Con L）、右摇杆（Joy-Con R） */
+  sticks: { l: [number, number]; r: [number, number] };
   /** 3 个样本 × (ax, ay, az, gx, gy, gz)，按报告原样排列：第 0 个是最新的 */
   imu: Int16Array;
+}
+
+/** 摇杆 3 字节 → (x, y)：x 是低 12 位，y 是高 12 位 */
+function stick(data: DataView, at: number): [number, number] {
+  const b0 = data.getUint8(at);
+  const b1 = data.getUint8(at + 1);
+  const b2 = data.getUint8(at + 2);
+  return [b0 | ((b1 & 0x0f) << 8), (b1 >> 4) | (b2 << 4)];
 }
 
 /** 解析 0x30 / 0x21 报告共有的头部 + 0x30 的 IMU 数据 */
@@ -100,6 +113,7 @@ export function parseFullReport(data: DataView): FullReport | null {
     battery: (batt >> 4) & 0x0e,
     charging: ((batt >> 4) & 0x01) === 1,
     buttonBytes: [data.getUint8(2), data.getUint8(3), data.getUint8(4)],
+    sticks: { l: stick(data, 5), r: stick(data, 8) },
     imu,
   };
 }

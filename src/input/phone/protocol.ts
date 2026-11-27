@@ -8,7 +8,16 @@
 import { DEG } from '@/core/math';
 import { type Vec3, vec3 } from '@/core/vec3';
 
-export type PhoneButton = 'confirm' | 'recenter' | 'pause' | 'back';
+export type PhoneButton =
+  | 'confirm'
+  | 'recenter'
+  | 'pause'
+  | 'back'
+  /** 菜单方向键 */
+  | 'up'
+  | 'down'
+  | 'left'
+  | 'right';
 export type Platform = 'ios' | 'android' | 'other';
 
 export interface PhoneImuMsg {

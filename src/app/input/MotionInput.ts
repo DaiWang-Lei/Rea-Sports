@@ -34,10 +34,12 @@ import {
   isLogicalDown,
   type ImuSample,
   type LogicalButton,
+  type NavDir,
   TapOnRelease,
 } from '@/input/types';
 import type { SwingFeatures } from '@/sim/hit/HitResolver';
 import type { Stroke } from '@/sim/players/PlayerSim';
+import { loadPrefs, savePrefs } from '../shared/prefs';
 import { roomCode } from './room';
 
 export type DeviceKind = 'joycon' | 'phone';
@@ -89,6 +91,8 @@ export interface MotionInputEvents {
   /** 校准 / 回中（Joy-Con 按住 X + ZR / ↑ + ZL，或游戏调 requestCalibration）的结果 */
   onCalibrate?: (device: InputDevice, result: CalibrateResult) => void;
   onButton?: (b: LogicalButton, down: boolean, device: InputDevice) => void;
+  /** 菜单方向：Joy-Con 摇杆推到底 / 手机方向键（down = 按下 / 松开）；所有设备的都交出来 */
+  onNav?: (dir: NavDir, down: boolean, device: InputDevice) => void;
   onDevicesChanged?: () => void;
   onLinkStatus?: (text: string, ok: boolean) => void;
   /** 录制用：Joy-Con 的原始输入报告 */
@@ -97,28 +101,10 @@ export interface MotionInputEvents {
   onRawSample?: (device: InputDevice, sample: ImuSample) => void;
 }
 
-// 握法自 2026-10-23 起固定（见 DEVICE_GRIP），不再保存；以前存的 rea-grip-* 不再读取
-const HANDED_KEY = 'rea-handed';
+// 握法自 2026-10-23 起固定（见 DEVICE_GRIP），不再保存；持拍手存在设置里（shared/prefs）
 /** 校准 / 回中组合键（像 Nintendo Switch Sports）：Joy-Con R 按住 X + ZR，Joy-Con L 按住 ↑ + ZL */
 function calibrateCombo(side: 'L' | 'R', b: Buttons): boolean {
   return side === 'R' ? b.x && b.zr : b.up && b.zl;
-}
-
-function loadJson<T>(key: string): T | null {
-  try {
-    const s = localStorage.getItem(key);
-    return s ? (JSON.parse(s) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveJson(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // 隐私模式等：不保存
-  }
 }
 
 export class MotionInput {
@@ -143,8 +129,7 @@ export class MotionInput {
   private hidCounter = 0;
 
   constructor() {
-    const h = loadJson<number>(HANDED_KEY);
-    if (h === -1) this.handed = -1;
+    this.handed = loadPrefs().handed[0];
   }
 
   get active(): InputDevice | null {
@@ -155,10 +140,13 @@ export class MotionInput {
     return isWebHidSupported();
   }
 
+  /** 1P 的持拍手（存进设置；所有设备都按它，双人时 2P 的手柄另外设） */
   setHanded(h: 1 | -1): void {
     this.handed = h;
     for (const d of this.devices.values()) d.paddle.handed = h;
-    saveJson(HANDED_KEY, h);
+    const p = loadPrefs();
+    p.handed[0] = h;
+    savePrefs(p);
   }
 
   /** 开始接手机、Joy-Con；可以调多次（对打里切换 1 人 / 2 人时共用同一个输入），只开始一次 */
@@ -282,6 +270,7 @@ export class MotionInput {
     driver.events = {
       onSamples: (s) => this.onSamples(d, s),
       onRawReport: (id, data, arrival) => this.events.onRawReport?.(d, id, data, arrival),
+      onStick: (dir) => this.stickTo(d, dir),
       onButtons: (b, prev) => {
         for (const name of ['confirm', 'back', 'recenter', 'pause'] as LogicalButton[]) {
           const now = isLogicalDown(driver.side, b, name);
@@ -312,7 +301,12 @@ export class MotionInput {
     d.phone = p;
     p.events = {
       onSamples: (s) => this.onSamples(d, s),
-      onButton: (name, down) => this.onButton(d, name, down),
+      onButton: (name, down) => {
+        if (name === 'up' || name === 'down' || name === 'left' || name === 'right') {
+          if (down) this.makeActive(d);
+          this.events.onNav?.(name, down, d);
+        } else this.onButton(d, name, down);
+      },
       onMeta: () => {
         d.name = `${p.platformText} · ${p.name}`;
         this.events.onDevicesChanged?.();
@@ -326,9 +320,27 @@ export class MotionInput {
     this.events.onButton?.(name, down, d);
   }
 
+  /** 摇杆换了方向：先松开原来的方向，再按下新的 */
+  private stickTo(d: InputDevice, dir: NavDir | null): void {
+    const prev = this.sticks.get(d.key) ?? null;
+    if (prev) this.events.onNav?.(prev, false, d);
+    this.sticks.set(d.key, dir);
+    if (dir) {
+      this.makeActive(d);
+      this.events.onNav?.(dir, true, d);
+    }
+  }
+
+  private readonly sticks = new Map<string, NavDir | null>();
+
   /** 这个设备的挥拍、抛球、按键交不交给游戏 */
   private listens(d: InputDevice): boolean {
     return this.multi || d === this.active;
+  }
+
+  /** 指定当前设备（电视界面进比赛时：1P 拿的手柄） */
+  setActive(d: InputDevice): void {
+    this.makeActive(d);
   }
 
   private makeActive(d: InputDevice): void {

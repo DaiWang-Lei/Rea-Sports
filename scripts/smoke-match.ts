@@ -26,14 +26,28 @@ page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
+// 「怎么玩」说明卡算已经看过（这里测的是打球）
+await page.addInitScript(() =>
+  localStorage.setItem('rea-howto', JSON.stringify(['match', 'versus', 'challenge', 'practice']))
+);
 await page.goto(`${BASE}/?mode=match&debug=1`);
 await sleep(1500);
 await page.getByRole('button', { name: '用键盘试一试' }).click();
 await sleep(300);
-await page.getByRole('button', { name: '小豆', exact: true }).click();
-await page.getByRole('button', { name: '6 分', exact: true }).click();
+// 对阵画面：「对手」「分制」两行左右换，换到小豆、6 分
+const spinTo = async (name: string, want: RegExp) => {
+  for (let i = 0; i < 20; i++) {
+    const v = await page.locator(`[data-spin="${name}"] b`).textContent();
+    if (want.test(v ?? '')) return;
+    await page.locator(`[data-spin="${name}"] [data-spin-dir="-1"]`).click();
+    await sleep(60);
+  }
+  errors.push(`换不到 ${name} = ${want}`);
+};
+await spinTo('opp', /^小豆$/);
+await spinTo('points', /^6 分/);
 await page.screenshot({ path: shot.replace(/(\.png)?$/, '-choose.png') });
-await page.getByRole('button', { name: '开始（A）' }).click();
+await page.locator('[data-act="start"]').click();
 
 type St = {
   step: string;
@@ -108,6 +122,11 @@ while (Date.now() - t0 < 420000) {
     continue;
   }
   await sleep(4);
+}
+// 最后一分打完：等回放和结算页（打球的时限不算这一段）
+for (let i = 0; i < 200 && s.result && s.step !== 'over'; i++) {
+  await sleep(100);
+  s = await state();
 }
 await sleep(500);
 await page.screenshot({ path: shot });

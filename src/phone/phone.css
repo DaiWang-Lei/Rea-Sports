@@ -161,3 +161,43 @@ button.down {
   color: var(--text);
   letter-spacing: 0.1em;
 }
+
+/* 菜单方向键：十字排开，中间是「返回」 */
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-areas:
+    '. up .'
+    'left back right'
+    '. down .';
+  gap: 8px;
+  margin: 10px auto 12px;
+  max-width: 260px;
+}
+
+.dpad .up {
+  grid-area: up;
+}
+
+.dpad .down {
+  grid-area: down;
+}
+
+.dpad .left {
+  grid-area: left;
+}
+
+.dpad .right {
+  grid-area: right;
+}
+
+.dpad .back {
+  grid-area: back;
+  font-size: 15px;
+}
+
+button.nav {
+  height: 56px;
+  font-size: 22px;
+  border-radius: 14px;
+}

@@ -1,0 +1,21 @@
+/* 电视界面的颜色、圆角、阴影、字体（菜单、面板、比赛里的 HUD 共用） */
+
+:root {
+  --tv-sky-top: #5ec8ff;
+  --tv-sky-bottom: #d8f2ff;
+  --tv-card: #ffffff;
+  --tv-card-2: #f2f8fd;
+  --tv-ink: #17324d;
+  --tv-ink-dim: #5f7590;
+  --tv-accent: #ff9f1c;
+  --tv-accent-2: #ffd166;
+  --tv-good: #23b26d;
+  --tv-bad: #ef5b5b;
+  --tv-p1: #2f80ed;
+  --tv-p2: #ff7a45;
+  --tv-radius: 2.4vh;
+  --tv-shadow: 0 1.2vh 3vh rgba(18, 62, 112, 0.22);
+  --tv-font:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    system-ui, sans-serif;
+}

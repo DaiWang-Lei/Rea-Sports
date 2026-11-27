@@ -3,59 +3,52 @@
  * 进来先加入：拿着手柄、拍头像遥控器一样指向电视按 A（加入的同时定好电视方向），谁先按谁是 1P；
  * 两人到齐后按 A 开始。比赛和「和电脑对打」一样：轮到谁发球谁按 A 或向上抖手柄抛球，比分只在两分之间显示。
  * 任何一人暂停（+）或手柄断开，这一分作废，继续后重打；断开的手柄重新连上后按 A 回到原来的位置。
- * 加入页、暂停、结算时可以换成 1 人（和电脑对打，见 PlayHost），手柄不用重连。
+ * 加入页、暂停、结算都是电视面板（摇杆 / 方向键选、A 确定、B 返回）；直接用网址打开时（开发用）还可以换成 1 人。
+ * 持拍手、宽容度、时机提示用设置里的（见 shared/prefs.ts）。
  */
 import '../practice/practice.css';
 import '../match/match.css';
 import './versus.css';
 import QRCode from 'qrcode';
 import { tuning } from '@/config/tuning';
+import { avatarsInUse } from '@/render/avatar/roster';
+import { playerFace } from '@/ui/tv/faces';
+import { howToSeen, howToView } from '@/ui/tv/howto';
+import { spinRow, TvOverlay, tvButton } from '@/ui/tv/TvOverlay';
 import type { TossEvent } from '@/input/paddle/TossDetector';
 import type { Side } from '@/sim/constants';
 import { type MatchEvent, MatchSim } from '@/sim/MatchSim';
-import { type PointReason, REASON_TEXT } from '@/sim/rally/Referee';
+import type { PointReason } from '@/sim/rally/Referee';
 import type { GameView } from '../GameView';
 import type { CalibrateResult, InputDevice, MotionInput } from '../input/MotionInput';
 import type { PlayHost } from '../PlayHost';
-import { bindCrowd, crowdRow } from '../shared/crowdVolume';
-import { latencyMs, screenKey, setLatencyMs } from '../shared/latency';
-import { median, serveText, strokeText, timingText, WHIFF_TEXT } from '../shared/matchText';
+import { latencyMs } from '../shared/latency';
+import { median, serveText, strokeText, timingText } from '../shared/matchText';
 import { deviceSwingInput, HumanPaddle } from '../shared/motionPlay';
-import { playersRow } from '../shared/players';
+import { loadPrefs } from '../shared/prefs';
 import { deviceWords } from '../shared/SetupFlow';
+import { SettingsPanel } from '../shared/settingsView';
 
 const SIDES = ['near', 'far'] as const;
 const TAG: Record<Side, string> = { near: '1P', far: '2P' };
 
 interface Settings {
   points: 6 | 11;
-  leniency: number;
-  /** 击球后在自己的半屏小字提示时机 */
-  timingHint: boolean;
-  handed: Record<Side, 1 | -1>;
 }
 
 const SETTINGS_KEY = 'rea-versus';
 
 function loadSettings(): Settings {
-  const def: Settings = {
-    points: 6,
-    leniency: 0.6,
-    timingHint: true,
-    handed: { near: 1, far: 1 },
-  };
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
-    return {
-      points: s?.points === 11 ? 11 : 6,
-      leniency: s?.leniency ?? def.leniency,
-      timingHint: s?.timingHint ?? def.timingHint,
-      handed: { near: s?.handed?.near === -1 ? -1 : 1, far: s?.handed?.far === -1 ? -1 : 1 },
-    };
+    return { points: s?.points === 11 ? 11 : 6 };
   } catch {
-    return def;
+    return { points: 6 };
   }
 }
+
+/** 两边的持拍手（设置里 1P、2P 各一项） */
+const handedOf = (side: Side): 1 | -1 => loadPrefs().handed[side === 'near' ? 0 : 1];
 
 function saveSettings(s: Settings): void {
   try {
@@ -123,10 +116,13 @@ export class VersusApp {
   /** 加入页上显示的状态（变了才重画） */
   private lobbyShown = '';
   private lastLobbyCheck = 0;
+  /** 正在看「怎么玩」（加入页先不刷新） */
+  private howTo = false;
 
   // DOM
-  private readonly panelEl: HTMLDivElement;
-  private readonly pauseEl: HTMLDivElement;
+  /** 电视面板：加入、暂停、设置、结算 */
+  private readonly tv: TvOverlay;
+  private readonly settingsPanel: SettingsPanel;
   private readonly halves: Record<Side, Half>;
 
   constructor(private readonly host: PlayHost) {
@@ -157,12 +153,27 @@ export class VersusApp {
            <div class="mt-timing"></div>
            <div class="vs-hint"></div>
          </div>`
-       ).join('')}
-       <div class="pr-overlay mt-panel"></div>
-       <div class="pr-pause" hidden></div>`
+       ).join('')}`
     );
-    this.panelEl = root.querySelector('.mt-panel')!;
-    this.pauseEl = root.querySelector('.pr-pause')!;
+    this.tv = new TvOverlay(root, (k) => this.view.sfx.ui(k));
+    this.settingsPanel = new SettingsPanel(
+      {
+        sfx: this.view.sfx,
+        input: this.input,
+        players: 2,
+        onChange: (p) => {
+          for (const x of SIDES) {
+            const h = handedOf(x);
+            const d = this.slots[x];
+            if (d) d.paddle.handed = h;
+            this.sim.players[x].handed = h;
+            this.sim.human(x)!.leniency = p.leniency;
+          }
+        },
+        onBack: () => this.renderPause(),
+      },
+      this.tv
+    );
     const half = (s: Side): Half => {
       const el = root.querySelector(`.vs-half.${s}`)!;
       return {
@@ -192,15 +203,20 @@ export class VersusApp {
         if (side && this.playing) this.toss(side, toss.height, toss);
       },
       onButton: (b, down, d) => down && this.onButton(b, d),
+      onNav: (dir, down) => this.tv.navInput(dir, down),
       onCalibrate: (d, result) => this.onCalibrate(d, result),
       onDevicesChanged: () => this.onDevicesChanged(),
       onLinkStatus: () => this.renderLobby(true),
     };
     window.addEventListener('keydown', (e) => this.onKey(e), { signal: this.abort.signal });
-    // 从 1 人切过来：正在用的手柄直接当 1P（定过电视方向就不用再定）
+    // 电视界面里已经加入的两个人直接就位；从 1 人切过来时正在用的手柄直接当 1P（定过电视方向就不用再定）
+    const joined = host.ctx?.players.map((p) => p.device).filter((x) => x !== null) ?? [];
+    for (const d of joined) this.join(d, false);
     const d = this.input.active;
-    if (d && this.streaming(d)) this.join(d, false);
+    if (!joined.length && d && this.streaming(d)) this.join(d, false);
     this.renderLobby(true);
+    // 第一次玩：先看「怎么玩」
+    if (!howToSeen('versus')) this.showHowTo(() => this.showLobby());
     void this.input.start().then(() => this.renderLobby(true));
     // 冒烟测试 / 调试用：?debug=1 时把实例挂到 window 上
     if (new URLSearchParams(location.search).has('debug')) {
@@ -269,12 +285,11 @@ export class VersusApp {
   }
 
   private makeSim(): MatchSim {
-    const s = this.settings;
     return new MatchSim({
       seed: Math.floor(Math.random() * 1e9),
-      points: s.points,
-      handed: { ...s.handed },
-      leniency: s.leniency,
+      points: this.settings.points,
+      handed: { near: handedOf('near'), far: handedOf('far') },
+      leniency: loadPrefs().leniency,
       tune: tuning,
     });
   }
@@ -360,7 +375,7 @@ export class VersusApp {
 
   private onButton(b: string, d: InputDevice): void {
     this.view.sfx.unlock();
-    if (b === 'players' && (this.step !== 'play' || this.paused)) {
+    if (b === 'players' && !this.host.ctx && this.tv.visible) {
       this.host.switchTo('match');
       return;
     }
@@ -370,29 +385,31 @@ export class VersusApp {
       if (b === 'confirm' && this.canJoin) this.join(d, true);
       return;
     }
-    const step = this.step;
-    if (step === 'lobby') {
-      if (b === 'back') this.leave(side);
-      else if (b === 'recenter') this.input.requestCalibration(d);
-      else if (b === 'confirm') {
-        if (this.bothJoined) this.startGame();
-        else this.input.requestCalibration(d);
-      }
+    if (this.howTo) {
+      if (b === 'confirm' || b === 'back') this.tv.confirm();
       return;
     }
-    if (step === 'over') {
-      if (b === 'confirm') this.startGame();
-      else if (b === 'back') this.showLobby();
+    if (this.step === 'lobby') {
+      // 还没到齐：A 再指一次电视；直接用网址打开时 B 让出位置（按错了加入的）
+      if (b === 'recenter' || (b === 'confirm' && !this.bothJoined))
+        this.input.requestCalibration(d);
+      else if (b === 'back' && !this.host.ctx) this.leave(side);
+      else if (b === 'confirm') this.tv.confirm();
+      else if (b === 'back') this.tv.back();
+      return;
+    }
+    // 面板上：A 确定、B 返回；暂停里再按 + 继续
+    if (this.tv.visible) {
+      if (b === 'confirm') this.tv.confirm();
+      else if (b === 'back') this.tv.back();
+      else if (b === 'pause' && this.paused) this.resume();
       return;
     }
     if (b === 'pause') {
       this.togglePause();
       return;
     }
-    if (this.paused) {
-      if (b === 'confirm') this.resume();
-      return;
-    }
+    if (this.paused) return;
     // A：正在回放（或马上要回放）就跳过
     if (b === 'confirm' && this.view.skipReplay()) return;
     if (b === 'recenter') {
@@ -407,14 +424,12 @@ export class VersusApp {
 
   private onKey(e: KeyboardEvent): void {
     this.view.sfx.unlock();
+    if (this.tv.key(e)) return;
     const k = e.key.toLowerCase();
     if (k === 'escape' || k === 'p') {
       if (this.step === 'play') this.togglePause();
     } else if (k === 'enter' || k === ' ') {
-      if (this.step === 'play' && !this.paused) this.view.skipReplay();
-      else if (k === ' ') return;
-      else if (this.step === 'lobby' && this.bothJoined) this.startGame();
-      else if (this.step === 'over') this.startGame();
+      if (this.playing) this.view.skipReplay();
     }
   }
 
@@ -457,7 +472,7 @@ export class VersusApp {
     const side = SIDES.find((s) => !this.slots[s]);
     if (!side) return null;
     this.slots[side] = d;
-    d.paddle.handed = this.settings.handed[side];
+    d.paddle.handed = handedOf(side);
     this.view.sfx.beep(880, 0.08);
     if (calibrate) this.input.requestCalibration(d);
     if (this.step === 'lobby') this.renderLobby(true);
@@ -484,7 +499,7 @@ export class VersusApp {
   private showLobby(): void {
     this.step = 'lobby';
     this.paused = false;
-    this.pauseEl.hidden = true;
+    this.lobbyShown = '';
     this.renderLobby(true);
   }
 
@@ -495,8 +510,7 @@ export class VersusApp {
     this.step = 'play';
     this.paused = false;
     this.resultsAt = NaN;
-    this.panelEl.hidden = true;
-    this.pauseEl.hidden = true;
+    this.tv.hide();
     this.view.hud.flash(`${this.settings.points} 分制`, '1P 先发球', 1.6);
   }
 
@@ -529,24 +543,13 @@ export class VersusApp {
       return;
     }
     this.paused = false;
-    this.renderPause();
+    this.tv.hide();
   }
 
-  private setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
-    this.settings[key] = value;
+  private setPoints(points: 6 | 11): void {
+    this.settings.points = points;
     saveSettings(this.settings);
-    if (key === 'leniency') {
-      for (const s of SIDES) this.sim.human(s)!.leniency = value as number;
-    }
-    if (this.step === 'lobby') this.renderLobby(true);
-    if (this.paused) this.renderPause();
-  }
-
-  private setHanded(side: Side, h: 1 | -1): void {
-    this.setSetting('handed', { ...this.settings.handed, [side]: h });
-    const d = this.slots[side];
-    if (d) d.paddle.handed = h;
-    this.sim.players[side].handed = h;
+    this.renderLobby(true);
   }
 
   // ---------------------------------------------------------------- 比赛事件
@@ -595,7 +598,7 @@ export class VersusApp {
 
   /** 这一边半屏下方的小字；时机提示可以在设置里关，force（校准结果）总是显示 */
   private note(side: Side, text: string, force = false): void {
-    if (!force && !this.settings.timingHint) return;
+    if (!force && !loadPrefs().timingHint) return;
     const h = this.halves[side];
     h.timing.textContent = text;
     h.timing.classList.add('show');
@@ -605,218 +608,188 @@ export class VersusApp {
 
   // ---------------------------------------------------------------- 界面
 
-  private opt<T extends string | number | boolean>(
-    name: string,
-    value: T,
-    cur: T,
-    text: string
-  ): string {
-    return `<button class="${value === cur ? 'on' : ''}" data-set="${name}" data-val="${value}">${text}</button>`;
-  }
-
-  /** 面板里的「1 人 / 2 人」按钮 */
-  private bindPlayers(el: HTMLElement): void {
-    el.querySelector('[data-players="1"]')?.addEventListener('click', () =>
-      this.host.switchTo('match')
-    );
-  }
-
-  /** 把面板里的 data-set 按钮接到设置上 */
-  private bindSettings(el: HTMLElement): void {
-    el.querySelectorAll<HTMLButtonElement>('[data-set]').forEach((b) =>
-      b.addEventListener('click', () => {
-        const name = b.dataset.set!;
-        const raw = b.dataset.val!;
-        if (name === 'handed-near' || name === 'handed-far') {
-          this.setHanded(name === 'handed-near' ? 'near' : 'far', raw === '-1' ? -1 : 1);
-        } else if (name === 'timingHint') {
-          this.setSetting('timingHint', raw === 'true');
-        } else if (name === 'points') {
-          this.setSetting('points', raw === '11' ? 11 : 6);
-        } else if (name === 'leniency') {
-          this.setSetting('leniency', Number(raw));
-        }
-      })
-    );
-  }
-
   /** 一个位置的状态：谁的手柄、有没有数据、定没定电视方向 */
   private slotText(side: Side): string {
     const d = this.slots[side];
-    if (!d) return '<span class="dim">等待加入</span>';
+    if (!d) return '<span>等待加入</span>';
     const w = deviceWords(d);
     const issue = !this.streaming(d)
       ? '没有数据'
       : !d.paddle.calibrated
-        ? `还没定电视方向（指向电视按 ${w.confirm}）`
+        ? `指向电视按 ${w.confirm}`
         : '';
-    return `<b>${d.name}</b>${issue ? `<br/><span class="warn">${issue}</span>` : '<br/><span class="ok">准备好了</span>'}`;
+    return `<span>${d.name}</span><span class="tv-tag${issue ? ' warn' : ''}">${issue || '准备好了'}</span>`;
   }
 
   /** 加入页：两个位置、连手柄、分制；状态变了才重画（force = 一定重画） */
+  /** 「怎么玩」：看完回到 then */
+  private showHowTo(then: () => void): void {
+    this.howTo = true;
+    this.tv.show(
+      howToView('versus', () => {
+        this.howTo = false;
+        then();
+      })
+    );
+  }
+
   private renderLobby(force = false): void {
-    if (this.step !== 'lobby') return;
+    if (this.step !== 'lobby' || this.howTo) return;
     const waiting = [...this.input.devices.values()].filter((d) => !this.sideOf(d));
+    const standalone = !this.host.ctx;
     const shown = JSON.stringify([
       SIDES.map((s) => this.slotText(s)),
       waiting.map((d) => d.name),
       this.settings.points,
+      standalone && this.input.linkStatus.text,
     ]);
     if (!force && shown === this.lobbyShown) return;
+    const keep = this.lobbyShown !== '';
     this.lobbyShown = shown;
-    const p = this.panelEl;
-    p.hidden = false;
-    const s = this.settings;
     const both = this.bothJoined;
-    p.innerHTML = `
-      <div class="pr-panel vs-lobby">
-        <h2>双人对打</h2>
-        ${playersRow(2)}
-        <div class="vs-slots">
+    const faces = avatarsInUse();
+    this.tv.show(
+      {
+        className: 'tv-wide',
+        html: `
+        <div class="tv-vs">
           ${SIDES.map(
-            (x) => `
-            <div class="vs-slot ${x}${this.slots[x] ? ' joined' : ''}">
-              <div class="vs-slot-tag">${TAG[x]}<span class="dim small">${x === 'near' ? '左半屏' : '右半屏'}</span></div>
-              <div>${this.slotText(x)}</div>
+            (x) => `<div class="tv-vs-side">
+              ${playerFace(faces[x], x === 'far')}
+              <b>${TAG[x]}</b>
+              ${this.slotText(x)}
             </div>`
-          ).join('')}
+          ).join('<div class="tv-vs-mid">VS</div>')}
         </div>
-        <p class="pr-big">${
+        <p class="tv-note">${
           both
-            ? '两人都到齐了，按 A 开始'
+            ? '两个人都到齐了'
             : '拿着手柄，拍头像遥控器一样<b>指向电视</b>，按 A 加入（Joy-Con L 按 →，手机按「确认」）'
-        }</p>
-        ${waiting.length ? `<p class="dim">已连接、还没加入：${waiting.map((d) => d.name).join('、')}</p>` : ''}
-        <div class="pr-setting"><span>分制</span>${this.opt('points', 6, s.points, '6 分')}${this.opt('points', 11, s.points, '11 分（球更快）')}</div>
-        <div class="pr-actions">
-          <button class="primary" data-act="start" ${both ? '' : 'disabled'}>开始（A）</button>
-          <a href="./"><button>返回首页</button></a>
-        </div>
-        <div class="pr-connect vs-connect">
-          <div class="pr-box">
-            <h3>连 Joy-Con</h3>
-            <p class="dim small">先在系统蓝牙里配对。一次选一只，两只就点两次；一对拆开用时，左边那只（L）也能当球拍。</p>
-            <button data-act="joycon" ${this.input.webHidSupported ? '' : 'disabled'}>连接 Joy-Con</button>
-          </div>
-          <div class="pr-box">
-            <h3>连手机</h3>
-            <canvas class="pr-qr" width="132" height="132"></canvas>
-            <div class="pr-link ${this.input.linkStatus.ok ? 'ok' : 'warn'}">● ${this.input.linkStatus.text}</div>
-            ${this.input.room ? `<div class="pr-room">房间号 ${this.input.room}</div>` : ''}
-          </div>
-        </div>
-        <p class="dim small">两个人站开一点，握紧手柄、最好挂上腕带。人物在首页选：1P 用「你」，2P 用「对手」。换成 1 人：Joy-Con X（L 按 ←）。</p>
-      </div>`;
-    const qr = p.querySelector<HTMLCanvasElement>('.pr-qr');
+        }${waiting.length ? `<br/>已连接、还没加入：${waiting.map((d) => d.name).join('、')}` : ''}</p>
+        ${spinRow('points', '分制', this.settings.points === 6 ? '6 分' : '11 分（球更快）')}
+        ${
+          standalone
+            ? `<div class="tv-qr" style="box-shadow:none;padding:0">
+                <canvas width="160" height="160"></canvas>
+                <div><b>用手机当球拍</b>：扫码<br/><span class="tv-note">${this.input.linkStatus.text}${this.input.room ? ` · 房间 ${this.input.room}` : ''}</span></div>
+              </div>`
+            : ''
+        }
+        <div class="tv-buttons tv-inline">
+          ${tvButton('start', '开始', true, true)}
+          ${standalone && this.input.webHidSupported ? tvButton('joycon', '连接 Joy-Con') : ''}
+          ${standalone ? tvButton('solo', '一个人玩') : ''}
+          ${tvButton('home', '回到菜单')}
+        </div>`,
+        hints: [
+          ['◀▶', '分制'],
+          ['A', both ? '开始' : '加入'],
+          ['B', '回到菜单'],
+        ],
+        onBack: () => this.host.exit(),
+        onSpin: () => this.setPoints(this.settings.points === 6 ? 11 : 6),
+        onAct: (act) => {
+          if (act === 'start') {
+            if (this.bothJoined) this.startGame();
+            else this.view.hud.flash(`等 ${this.slots.near ? '2P' : '1P'} 加入`, '', 1, 'bad');
+          } else if (act === 'joycon') void this.input.requestJoyCon().catch(() => {});
+          else if (act === 'solo') this.host.switchTo('match');
+          else if (act === 'home') this.host.exit();
+        },
+      },
+      keep
+    );
+    const qr = this.tv.el.querySelector<HTMLCanvasElement>('.tv-qr canvas');
     if (qr && this.input.phoneUrl) {
-      void QRCode.toCanvas(qr, this.input.phoneUrl, { width: 132, margin: 1 });
+      void QRCode.toCanvas(qr, this.input.phoneUrl, { width: 160, margin: 1 });
     }
-    this.bindSettings(p);
-    this.bindPlayers(p);
-    p.querySelector('[data-act="start"]')?.addEventListener('click', () => {
-      if (this.bothJoined) this.startGame();
-    });
-    p.querySelector('[data-act="joycon"]')?.addEventListener('click', () => {
-      void this.input.requestJoyCon().catch(() => {});
-    });
   }
 
   private renderResults(): void {
-    const p = this.panelEl;
-    p.hidden = false;
-    const sim = this.sim;
     const g = this.game;
-    const { near, far } = sim.scoring.score;
-    const result = sim.result;
-    const title = result === 'draw' ? '平局' : `${TAG[result === 'far' ? 'far' : 'near']} 获胜！`;
+    const { near, far } = this.sim.scoring.score;
+    const result = this.sim.result;
+    const title = result === 'draw' ? '平局' : `${TAG[result === 'far' ? 'far' : 'near']} 赢了！`;
     const rallies = g.points.map((x) => x.rallyHits);
     const longest = rallies.length ? Math.max(...rallies) : 0;
-    const avg = rallies.length ? rallies.reduce((a, b) => a + b, 0) / rallies.length : 0;
-    /** 这一边丢的分（对方得分）按原因数 */
-    const lost = (side: Side) => {
-      const c: Partial<Record<PointReason, number>> = {};
-      for (const x of g.points) if (x.winner !== side) c[x.reason] = (c[x.reason] ?? 0) + 1;
-      const parts = Object.entries(c).map(([r, n]) => `${REASON_TEXT[r as PointReason]} ${n}`);
-      return parts.length ? parts.join(' · ') : '没有';
-    };
-    const hits = (side: Side) => {
+    const row = (side: Side) => {
       const pl = g.players[side];
-      const whiffs = Object.entries(pl.whiffs)
-        .map(([r, n]) => `${r === 'volley' ? '未落台' : (WHIFF_TEXT[r] ?? r)} ${n}`)
-        .join('、');
       const med = median(pl.timings.slice(-12));
-      return `回球 ${pl.hits} 拍 · 发球 ${pl.serves} 次${whiffs ? ` · 挥空（${whiffs}）` : ''}${
+      return `<div><span>${TAG[side]}</span><b>回球 ${pl.hits} 拍${
         med === null
           ? ''
-          : ` · 时机中位数 ${med === 0 ? '正好' : `${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms`}`
-      }`;
+          : ` · 时机 ${med === 0 ? '正好' : `${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms`}`
+      }</b></div>`;
     };
-    p.innerHTML = `
-      <div class="pr-panel">
-        <h2 class="mt-result ${result === 'draw' ? '' : 'ok'}">${title}</h2>
-        <div class="mt-final">1P <b>${near}</b> : <b>${far}</b> 2P</div>
-        <div class="pr-row"><span>回合</span><b>共 ${g.points.length} 分 · 最长 ${longest} 拍 · 平均 ${avg.toFixed(1)} 拍</b></div>
-        ${SIDES.map(
-          (s) => `
-          <div class="pr-row"><span>${TAG[s]} 的失分</span><b>${lost(s)}</b></div>
-          <div class="pr-row"><span>${TAG[s]} 的击球</span><b>${hits(s)}</b></div>`
-        ).join('')}
-        <div class="pr-actions">
-          <button class="primary" data-act="again">再来一局（A）</button>
-          <button data-act="lobby">换人 / 换分制（B）</button>
-          <button data-players="1">换成 1 人（X）</button>
-          <a href="./"><button>返回首页</button></a>
+    this.tv.show({
+      html: `
+        <h2 class="tv-result${result === 'draw' ? '' : ' win'}">${title}</h2>
+        <div class="tv-score">1P <b>${near}</b>:<b>${far}</b> 2P</div>
+        <div class="tv-stats">
+          <div><span>回合</span><b>共 ${g.points.length} 分 · 最长 ${longest} 拍</b></div>
+          ${SIDES.map(row).join('')}
         </div>
-      </div>`;
-    this.bindPlayers(p);
-    p.querySelector('[data-act="again"]')?.addEventListener('click', () => this.startGame());
-    p.querySelector('[data-act="lobby"]')?.addEventListener('click', () => this.showLobby());
+        <div class="tv-buttons tv-inline">
+          ${tvButton('again', '再来一局', true, true)}
+          ${tvButton('lobby', '换分制')}
+          ${tvButton('home', '回到菜单')}
+        </div>`,
+      hints: [
+        ['A', '确定'],
+        ['B', '换分制'],
+      ],
+      onBack: () => this.showLobby(),
+      onAct: (act) => {
+        if (act === 'again') this.startGame();
+        else if (act === 'lobby') this.showLobby();
+        else if (act === 'home') this.host.exit();
+      },
+    });
   }
 
+  /** 暂停：继续、重新开始、设置、结束这一局、回到菜单；有人断开时说是谁 */
   private renderPause(): void {
-    const p = this.pauseEl;
-    p.hidden = !this.paused;
-    if (!this.paused) return;
-    const s = this.settings;
+    if (this.howTo) return;
+    if (!this.paused) {
+      this.tv.hide();
+      return;
+    }
     const sc = this.sim.scoring.score;
     const lost = SIDES.filter((x) => !this.slots[x] || !this.streaming(this.slots[x]));
     const device = this.pauseReason === 'device';
-    p.innerHTML = `
-      <div class="pr-panel">
+    this.tv.show(
+      {
+        html: `
         <h2>${device ? '手柄断开了' : '暂停'}</h2>
         ${
           lost.length
-            ? `<p class="pr-big">${lost.map((x) => TAG[x]).join('、')} 的手柄断开或没有数据。重新连上（Joy-Con 按一下任意键；手机重新打开页面）后按 A 加入，再按继续。</p>`
+            ? `<p class="tv-note"><b>${lost.map((x) => TAG[x]).join('、')}</b> 的手柄断开或没有数据：重新连上（Joy-Con 按一下任意键；手机重新打开页面）后按 A 加入，再选「继续」</p>`
             : ''
         }
-        <p class="dim">${s.points} 分制 · 比分 1P ${sc.near} : ${sc.far} 2P · 正在打的这一分作废，继续后重打</p>
-        <div class="pr-setting"><span>宽容度</span>${[0.2, 0.6, 1].map((v) => this.opt('leniency', v, s.leniency, v < 0.4 ? '严格' : v < 0.8 ? '标准' : '宽松')).join('')}</div>
-        <div class="pr-setting"><span>时机提示</span>${this.opt('timingHint', true, s.timingHint, '显示')}${this.opt('timingHint', false, s.timingHint, '不显示')}</div>
-        ${crowdRow()}
-        ${SIDES.map(
-          (x) =>
-            `<div class="pr-setting"><span>${TAG[x]} 持拍手</span>${this.opt(`handed-${x}`, 1, s.handed[x], '右手')}${this.opt(`handed-${x}`, -1, s.handed[x], '左手')}</div>`
-        ).join('')}
-        <div class="pr-setting"><span>画面延迟补偿<small class="dim">（这块屏幕 ${screenKey()}）</small></span>
-          <button data-lat="-10">−10</button><b class="pr-lat">${latencyMs()} ms</b><button data-lat="10">+10</button>
-        </div>
-        <div class="pr-actions">
-          <button class="primary" data-act="resume">继续（A / +）</button>
-          <button data-act="quit">结束这一局</button>
-          <button data-players="1">换成 1 人（X）</button>
-          <a href="./"><button>返回首页</button></a>
-        </div>
-      </div>`;
-    this.bindSettings(p);
-    this.bindPlayers(p);
-    bindCrowd(p, this.view.sfx, () => this.renderPause());
-    p.querySelectorAll<HTMLButtonElement>('[data-lat]').forEach((b) =>
-      b.addEventListener('click', () => {
-        setLatencyMs(latencyMs() + Number(b.dataset.lat));
-        this.renderPause();
-      })
+        <p class="tv-note">${this.settings.points} 分制 · 比分 1P ${sc.near} : ${sc.far} 2P<br/>正在打的这一分作废，继续后重打</p>
+        <div class="tv-buttons">
+          ${tvButton('resume', '继续', true, true)}
+          ${tvButton('restart', '重新开始')}
+          ${tvButton('settings', '设置')}
+          ${tvButton('howto', '怎么玩')}
+          ${tvButton('quit', '结束这一局')}
+          ${tvButton('home', '回到菜单')}
+        </div>`,
+        hints: [
+          ['A', '确定'],
+          ['B', '继续'],
+        ],
+        onBack: () => this.resume(),
+        onAct: (act) => {
+          if (act === 'resume') this.resume();
+          else if (act === 'restart') this.startGame();
+          else if (act === 'settings') this.settingsPanel.show();
+          else if (act === 'howto') this.showHowTo(() => this.renderPause());
+          else if (act === 'quit') this.showLobby();
+          else if (act === 'home') this.host.exit();
+        },
+      },
+      true
     );
-    p.querySelector('[data-act="resume"]')?.addEventListener('click', () => this.resume());
-    p.querySelector('[data-act="quit"]')?.addEventListener('click', () => this.showLobby());
   }
 }

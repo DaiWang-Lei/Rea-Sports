@@ -3,7 +3,8 @@
  * 纯逻辑，不依赖 WebHID：实机驱动和录制回放共用这一层。
  */
 import { ImuClock } from '../clock/ImuClock';
-import { type Buttons, emptyButtons, type ImuSample, type JoyConSide } from '../types';
+import { type Buttons, emptyButtons, type ImuSample, type JoyConSide, type NavDir } from '../types';
+import { type StickCalibration, StickNav } from './stickNav';
 import {
   computeScale,
   convertSample,
@@ -25,6 +26,8 @@ export interface JoyConStreamEvents {
   /** 每个 0x30 报告解析出的 3 个样本（最旧的在前） */
   onSamples?: (samples: ImuSample[]) => void;
   onButtons?: (buttons: Buttons, prev: Buttons) => void;
+  /** 摇杆推到一个方向 / 松开（null）：菜单里用 */
+  onStick?: (dir: NavDir | null) => void;
   onSubcmdReply?: (reply: SubcmdReply) => void;
 }
 
@@ -45,6 +48,7 @@ export class JoyConStream {
   calibration: ImuCalibration = DEFAULT_CALIBRATION;
   private scale: ImuScale = computeScale(DEFAULT_CALIBRATION);
   buttons: Buttons = emptyButtons();
+  private readonly stickNav = new StickNav();
   battery = -1;
   charging = false;
   readonly stats: JoyConStreamStats = {
@@ -67,6 +71,11 @@ export class JoyConStream {
     this.scale = computeScale(cal);
   }
 
+  /** 摇杆校准（菜单里用摇杆选） */
+  setStickCalibration(cal: StickCalibration): void {
+    this.stickNav.calibrate(cal);
+  }
+
   handleReport(reportId: number, data: DataView, arrival: number): void {
     if (reportId === IN_FULL) {
       const r = parseFullReport(data);
@@ -76,6 +85,9 @@ export class JoyConStream {
       this.battery = r.battery;
       this.charging = r.charging;
       this.updateButtons(r.buttonBytes);
+      const [sx, sy] = this.side === 'L' ? r.sticks.l : r.sticks.r;
+      const dir = this.stickNav.update(sx, sy);
+      if (dir !== undefined) this.events.onStick?.(dir);
       if (isImuAllZero(r.imu)) {
         this.stats.zeroImuReports++;
         this.stats.consecutiveZeroImu++;

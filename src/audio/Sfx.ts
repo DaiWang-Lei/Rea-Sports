@@ -119,6 +119,11 @@ export class Sfx {
     return this.decoding;
   }
 
+  /** 声音打开了没有（浏览器要先点一下鼠标或按一下键盘；Joy-Con 的按键不算） */
+  get unlocked(): boolean {
+    return !!this.ctx && (this.offline || this.ctx.state === 'running');
+  }
+
   get ready(): boolean {
     return !!this.ctx && this.enabled && (this.offline || this.ctx.state === 'running');
   }
@@ -214,9 +219,9 @@ export class Sfx {
   }
 
   /** 提示音（菜单、计时） */
-  beep(freq = 880, dur = 0.12, gain = 0.3): void {
+  beep(freq = 880, dur = 0.12, gain = 0.3, delay = 0): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
+    const t = this.ctx!.currentTime + delay;
     const osc = this.ctx!.createOscillator();
     osc.frequency.value = freq;
     const g = this.ctx!.createGain();
@@ -225,6 +230,26 @@ export class Sfx {
     osc.connect(g).connect(this.master!);
     osc.start(t);
     osc.stop(t + dur + 0.02);
+  }
+
+  /** 菜单音效：移动一下、确定（上扬两声）、返回（下降两声）、到头了（低音） */
+  ui(kind: 'move' | 'ok' | 'back' | 'deny'): void {
+    switch (kind) {
+      case 'move':
+        this.beep(1180, 0.035, 0.07);
+        break;
+      case 'ok':
+        this.beep(660, 0.05, 0.12);
+        this.beep(990, 0.08, 0.12, 0.055);
+        break;
+      case 'back':
+        this.beep(620, 0.05, 0.1);
+        this.beep(420, 0.08, 0.1, 0.055);
+        break;
+      case 'deny':
+        this.beep(200, 0.09, 0.1);
+        break;
+    }
   }
 
   // ---------------------------------------------------------------- 内部

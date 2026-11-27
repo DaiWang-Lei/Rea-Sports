@@ -49,8 +49,11 @@ const state = () => page.evaluate('window.__challenge.debugState()') as Promise<
 await page.click('[data-act="keyboard"]');
 await sleep(300);
 console.log(`开始前：${(await state()).step}`);
-await page.keyboard.press('Enter');
-await sleep(200);
+// 第一次进来先是「怎么玩」，再是开始前的面板：按回车直到开打
+for (let i = 0; i < 3 && (await state()).step !== 'run'; i++) {
+  await page.keyboard.press('Enter');
+  await sleep(200);
+}
 
 let swungFor: number | null = null;
 let maxCups = 0;
@@ -95,7 +98,7 @@ while (Date.now() - t0 < 300000) {
   await sleep(4);
 }
 await sleep(400);
-const panel = await page.locator('.ch-panel').innerText();
+const panel = await page.locator('.tv-panel').innerText();
 const reason = await page.locator('.hud-msg').innerText();
 if (!shotTaken) await page.screenshot({ path: shot });
 console.log(

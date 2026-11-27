@@ -30,6 +30,10 @@ page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
+// 「怎么玩」说明卡算已经看过（这里测的是打球）
+await page.addInitScript(() =>
+  localStorage.setItem('rea-howto', JSON.stringify(['match', 'versus', 'challenge', 'practice']))
+);
 await page.goto(`${BASE}/?mode=practice&debug=1`);
 await sleep(800);
 
@@ -109,6 +113,8 @@ for (let i = 0; i < 60 && (await state()).step === 'point'; i++) await sleep(100
 console.log(
   `校准后步骤：${(await state()).step}（用了 ${((Date.now() - t0) / 1000).toFixed(1)}s）`
 );
+// 开始前的面板：按开始
+await page.locator('[data-act="start"]').click();
 const bias = await page.evaluate(() => {
   const app = (
     window as unknown as { __practice: { input: { active: { motion: { gyroBias: unknown } } } } }

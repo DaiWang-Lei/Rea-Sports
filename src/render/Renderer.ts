@@ -291,8 +291,11 @@ export class Renderer {
     this.replayY = start.ball.y;
   }
 
-  /** 回放的一帧：摆成录下来的样子，从球台侧面的转播机位全屏画 */
-  renderReplay(f: ReplayFrame, dtReal: number): void {
+  /**
+   * 回放的一帧：摆成录下来的样子，从球台侧面的转播机位全屏画；
+   * view = 指定机位（菜单背景绕着球场转的镜头），不给就是跟着球走的转播机位
+   */
+  renderReplay(f: ReplayFrame, dtReal: number, view?: { pos: Vec3; look: Vec3 }): void {
     this.lastT = f.t;
     this.ballView.style = f.trail;
     this.ballView.spin = f.spin;
@@ -309,8 +312,13 @@ export class Renderer {
     const c = REPLAY_CAMERA;
     this.replayY += (f.ball.y - this.replayY) * (1 - Math.exp(-dtReal / c.tau));
     const cam = this.replayCam;
-    toThree({ x: c.x, y: c.follow * this.replayY, z: c.z }, cam.position);
-    cam.lookAt(toThree({ x: 0, y: c.look * this.replayY, z: TABLE.height + 0.15 }));
+    if (view) {
+      toThree(view.pos, cam.position);
+      cam.lookAt(toThree(view.look));
+    } else {
+      toThree({ x: c.x, y: c.follow * this.replayY, z: c.z }, cam.position);
+      cam.lookAt(toThree({ x: 0, y: c.look * this.replayY, z: TABLE.height + 0.15 }));
+    }
     const canvas = this.renderer.domElement;
     const w = canvas.clientWidth || window.innerWidth;
     const h = canvas.clientHeight || window.innerHeight;

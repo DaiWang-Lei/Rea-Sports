@@ -29,6 +29,10 @@ page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
+// 「怎么玩」说明卡算已经看过（这里测的是打球）
+await page.addInitScript(() =>
+  localStorage.setItem('rea-howto', JSON.stringify(['match', 'versus', 'challenge', 'practice']))
+);
 await page.goto(`${BASE}/?mode=practice&debug=1`);
 await sleep(1000);
 
@@ -108,6 +112,10 @@ send({ type: 'btn', name: 'confirm', down: true });
 send({ type: 'btn', name: 'confirm', down: false });
 await sleep(300);
 console.log(`校准后步骤：${(await state()).step}`);
+// 开始前的面板：手机按「确认」= 开始
+send({ type: 'btn', name: 'confirm', down: true });
+send({ type: 'btn', name: 'confirm', down: false });
+await sleep(300);
 
 // 暂停 → 开始录制 → 继续
 await page.keyboard.press('Escape');

@@ -54,6 +54,10 @@ export class PhoneDevice {
     recenter: false,
     pause: false,
     back: false,
+    up: false,
+    down: false,
+    left: false,
+    right: false,
   };
   events: PhoneDeviceEvents = {};
   private readonly clock = new OffsetClock();

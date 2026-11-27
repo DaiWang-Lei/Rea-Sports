@@ -27,6 +27,13 @@ interface Snapshot {
   bodies: Record<Side, { x: number; y: number }>;
 }
 
+/** 页面上共用的画面、文字层、声音 */
+export interface SharedView {
+  renderer: Renderer;
+  hud: Hud;
+  sfx: Sfx;
+}
+
 export interface GameViewOptions {
   names: HudNames;
   /** 回合中也显示比分（自动演示用）；正式比赛按 WSR 只在两分之间显示 */
@@ -54,7 +61,7 @@ const CROWD = { calm: 0.11, excited: 0.55, echo: 0.4 };
 export class GameView {
   readonly renderer: Renderer;
   readonly hud: Hud;
-  readonly sfx = new Sfx();
+  readonly sfx: Sfx;
   sim: MatchSim;
   timeScale = 1;
   /** 暂停：照常渲染，但不推进仿真 */
@@ -78,18 +85,28 @@ export class GameView {
   /** 最后一分是不是球打到人（一局结束时输的一方照样捂脸） */
   private lastPointHit = false;
 
+  /** shared：用页面上已有的画面、文字层、声音（电视界面里各个玩法共用）；不给就自己建 */
   constructor(
     container: HTMLElement,
     sim: MatchSim,
-    private opts: GameViewOptions
+    private opts: GameViewOptions,
+    shared?: SharedView
   ) {
-    const canvas = document.createElement('canvas');
-    canvas.className = 'game-canvas';
-    container.appendChild(canvas);
-    this.renderer = new Renderer(canvas);
+    if (shared) {
+      this.renderer = shared.renderer;
+      this.hud = shared.hud;
+      this.sfx = shared.sfx;
+      this.hud.setNames(opts.names);
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'game-canvas';
+      container.appendChild(canvas);
+      this.renderer = new Renderer(canvas);
+      this.hud = new Hud(container, opts.names);
+      this.sfx = new Sfx();
+    }
     this.renderer.setSplit(!!opts.split);
     this.names = opts.names;
-    this.hud = new Hud(container, opts.names);
     this.sim = sim;
     this.prev = this.snapshot();
     this.sfx.setCrowd(CROWD.calm, 0);

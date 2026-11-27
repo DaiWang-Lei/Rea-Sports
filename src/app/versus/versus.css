@@ -1,4 +1,4 @@
-/* 双人分屏：沿用练习页、比赛页的面板样式，这里只有分屏特有的部分 */
+/* 双人分屏：分屏线、两边的 1P / 2P 标签和小字（面板都在电视面板里，见 ui/tv） */
 
 .vs-divider {
   position: absolute;
@@ -31,23 +31,24 @@
 .vs-tag {
   position: absolute;
   top: 2vh;
+  font-family: var(--tv-font);
   font-size: 3.2vh;
-  font-weight: 800;
-  padding: 0.2vh 1vw;
-  border-radius: 8px;
-  background: rgba(10, 16, 24, 0.55);
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  font-weight: 900;
+  padding: 0.3vh 1.4vw;
+  border-radius: 999px;
+  color: #fff;
+  box-shadow: var(--tv-shadow);
 }
 
 /* 标签放在外侧的角上（中间上方是比分） */
 .vs-half.near .vs-tag {
   left: 1.5vw;
-  color: #8ecaff;
+  background: var(--tv-p1);
 }
 
 .vs-half.far .vs-tag {
   right: 1.5vw;
-  color: #ffb38a;
+  background: var(--tv-p2);
 }
 
 .vs-half .mt-timing {
@@ -60,88 +61,21 @@
   bottom: 3vh;
   transform: translateX(-50%);
   max-width: 90%;
-  font-size: 1.9vh;
+  font-family: var(--tv-font);
+  font-size: 2vh;
+  font-weight: 700;
   text-align: center;
-  background: rgba(10, 16, 24, 0.6);
+  color: var(--tv-ink);
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
   border-radius: 999px;
-  padding: 0.6vh 1.4vw;
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  padding: 0.7vh 1.6vw;
   opacity: 0;
   transition: opacity 0.25s;
 }
 
 .vs-hint.visible {
   opacity: 0.95;
-}
-
-.vs-lobby {
-  width: min(720px, 100%) !important;
-}
-
-.vs-slots {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.vs-slot {
-  min-height: 92px;
-  padding: 12px 14px;
-  border: 2px dashed var(--border, #2a3442);
-  border-radius: 12px;
-  line-height: 1.6;
-}
-
-.vs-slot.joined {
-  border-style: solid;
-}
-
-.vs-slot.near.joined {
-  border-color: #8ecaff;
-}
-
-.vs-slot.far.joined {
-  border-color: #ffb38a;
-}
-
-.vs-slot-tag {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 24px;
-  font-weight: 800;
-}
-
-.vs-slot.near .vs-slot-tag {
-  color: #8ecaff;
-}
-
-.vs-slot.far .vs-slot-tag {
-  color: #ffb38a;
-}
-
-.vs-slot .ok {
-  color: #7cf0b0;
-}
-
-.vs-slot .warn {
-  color: #f5c542;
-}
-
-.vs-connect {
-  margin-top: 14px;
-}
-
-@media (max-width: 600px) {
-  .vs-slots {
-    grid-template-columns: 1fr;
-  }
-}
-
-.vs-connect .pr-qr {
-  width: 132px;
-  height: 132px;
 }
 
 .replaying .vs-divider,

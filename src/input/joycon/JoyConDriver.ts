@@ -2,8 +2,9 @@
  * Joy-Con WebHID 驱动：打开设备、按顺序发送初始化子命令（等待 ACK）、看门狗、震动。
  * 报告解析交给 JoyConStream（纯逻辑，可回放测试）。
  */
-import type { Buttons, ImuSample, JoyConSide } from '../types';
+import type { Buttons, ImuSample, JoyConSide, NavDir } from '../types';
 import { DEFAULT_CALIBRATION, parseCalibrationBlock, parseUserCalibration } from './calibration';
+import { parseStickCalibration } from './stickNav';
 import {
   buildRumblePayload,
   buildSubcommandPayload,
@@ -16,7 +17,9 @@ import {
   OUT_RUMBLE_ONLY,
   parseSpiRead,
   SPI_FACTORY_IMU_CAL,
+  SPI_FACTORY_STICK_CAL,
   SPI_USER_IMU_CAL_MAGIC,
+  SPI_USER_STICK_CAL,
   spiReadArgs,
   Subcmd,
   type SubcmdReply,
@@ -38,6 +41,8 @@ export const STATUS_TEXT: Record<DriverStatus, string> = {
 export interface JoyConDriverEvents {
   onSamples?: (samples: ImuSample[]) => void;
   onButtons?: (buttons: Buttons, prev: Buttons) => void;
+  /** 摇杆推到一个方向 / 松开（null） */
+  onStick?: (dir: NavDir | null) => void;
   onStatus?: (status: DriverStatus, detail?: string) => void;
   /** 原始输入报告（录制用） */
   onRawReport?: (reportId: number, data: Uint8Array, arrival: number) => void;
@@ -89,6 +94,7 @@ export class JoyConDriver {
     this.stream = new JoyConStream(this.side, {
       onSamples: (s) => this.events.onSamples?.(s),
       onButtons: (b, p) => this.events.onButtons?.(b, p),
+      onStick: (d) => this.events.onStick?.(d),
       onSubcmdReply: (r) => this.resolvePending(r),
     });
   }
@@ -188,6 +194,15 @@ export class JoyConDriver {
         ? '没读到 IMU 校准数据，使用默认值'
         : `使用${cal.source === 'user' ? '用户' : '出厂'}IMU 校准数据`
     );
+    // 摇杆：用户在主机上校准过就用用户的，否则用出厂的；都没有就按最初的读数定中心
+    const side = this.side;
+    const userStick = await this.spiRead(SPI_USER_STICK_CAL[side], 11);
+    const factoryStick = await this.spiRead(SPI_FACTORY_STICK_CAL[side], 9);
+    const stick =
+      (userStick && parseStickCalibration(userStick, side, true)) ||
+      (factoryStick && parseStickCalibration(factoryStick, side));
+    if (stick) this.stream.setStickCalibration(stick);
+    this.log(stick ? `摇杆中心 ${stick.center.join(', ')}` : '没读到摇杆校准，按最初的读数定中心');
   }
 
   /** 开 IMU → 设量程（必须在 0x40 之后，因为 0x40 会把量程重置为 ±8G）→ 全量报告模式 */

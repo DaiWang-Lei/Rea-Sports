@@ -25,10 +25,16 @@ page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
+// 「怎么玩」说明卡算已经看过（这里测的是打球）
+await page.addInitScript(() =>
+  localStorage.setItem('rea-howto', JSON.stringify(['match', 'versus', 'challenge', 'practice']))
+);
 await page.goto(`${BASE}/?mode=practice&debug=1`);
 await sleep(1500);
 await page.screenshot({ path: shot.replace(/\.png$/, '-connect.png') });
 await page.getByRole('button', { name: '用键盘试一试' }).click();
+// 开始前的面板：难度、送球区域用上次的，按开始
+await page.locator('[data-act="start"]').click();
 
 type St = {
   step: string;

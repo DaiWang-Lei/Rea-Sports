@@ -29,6 +29,7 @@
     "smoke:match-joycon": "tsx scripts/smoke-match-joycon.ts",
     "smoke:versus": "tsx scripts/smoke-versus.ts",
     "smoke:challenge": "tsx scripts/smoke-challenge.ts",
+    "smoke:tv": "tsx scripts/smoke-tv.ts",
     "smoke:tools": "tsx scripts/smoke-tools.ts",
     "thumbs:avatars": "tsx scripts/avatar-thumbs.ts",
     "eval:swing": "tsx scripts/eval-swing.ts",

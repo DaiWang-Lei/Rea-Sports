@@ -8,6 +8,7 @@ import { loadAvatarChoice, saveAvatarChoice } from './avatarChoice';
 import { GameView } from './GameView';
 import { ChallengeApp } from './challenge/ChallengeApp';
 import { PlayHost } from './PlayHost';
+import { Shell } from './shell/Shell';
 import { PracticeApp } from './practice/PracticeApp';
 import { loadOverrides, overrideCount, resetOverrides } from './shared/tuningStore';
 import { tuning } from '@/config/tuning';
@@ -112,8 +113,8 @@ function showMenu(): void {
   app.className = 'menu-root';
   app.innerHTML = `
     <div class="menu">
-      <h1>体感乒乓</h1>
-      <p class="dim">手感对标 Wii Sports Resort 乒乓球的净室重做 · 开发中</p>
+      <h1>体感乒乓 · 开发者入口</h1>
+      <p class="dim">玩家用的电视界面在 <a href="./">首页</a>；这里是开发用的各个页面和直达链接</p>
       ${avatarPicker()}
       <div class="menu-items">
         <a class="menu-item" href="?mode=match">
@@ -182,12 +183,15 @@ function showMenu(): void {
   );
 }
 
+// 默认打开电视界面；?dev=1 是开发用的入口页（调手感、视频打点、体感调试、自动演示……），
+// ?mode=xxx 直接打开某个玩法（开发、冒烟测试用）
 const mode = params.get('mode');
+const dev = params.has('dev');
 // 进场前先把选的人物准备好（带骨骼的模型要下载）
-if (['autoplay', 'match', 'practice', 'versus', 'challenge'].includes(mode ?? ''))
-  await preloadAvatars(loadAvatarChoice());
+if (mode || !dev) await preloadAvatars(loadAvatarChoice());
 if (mode === 'autoplay') startAutoplay();
 else if (mode === 'match' || mode === 'versus') new PlayHost(app, mode);
 else if (mode === 'practice') new PracticeApp(app);
 else if (mode === 'challenge') new ChallengeApp(app);
-else showMenu();
+else if (dev) showMenu();
+else new Shell(app);

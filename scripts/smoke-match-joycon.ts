@@ -33,6 +33,10 @@ page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
+// 「怎么玩」说明卡算已经看过（这里测的是打球）
+await page.addInitScript(() =>
+  localStorage.setItem('rea-howto', JSON.stringify(['match', 'versus', 'challenge', 'practice']))
+);
 await page.goto(`${BASE}/?mode=match&debug=1`);
 await sleep(800);
 
@@ -124,6 +128,35 @@ const poseOk = blade.y > 0.95;
 console.log(`校准后画面里拍头朝前（指向电视）：${poseOk ? '对' : '不对'}`);
 await page.evaluate('window.__upright = 1');
 await sleep(700);
+// 对阵画面用摇杆：上两下到「对手」，左右换到小豆（新的本机记录会随机配小豆或阿珍，阿珍很少失误、一分打很久），
+// 下两下回到「开始」，按 A
+const nav = (dir: string) =>
+  page.evaluate(
+    (d) =>
+      (
+        window as unknown as {
+          __match: { input: { events: { onNav(d: string, down: boolean): void } } };
+        }
+      ).__match.input.events.onNav(d, true),
+    dir
+  );
+const focused = () =>
+  page.evaluate(
+    `(() => { const el = document.querySelector('.tv-focused'); return el?.dataset.spin ?? el?.dataset.act ?? ''; })()`
+  ) as Promise<string>;
+await nav('up');
+await nav('up');
+for (let i = 0; i < 20; i++) {
+  if ((await page.locator('[data-spin="opp"] b').textContent()) === '小豆') break;
+  await nav('left');
+  await sleep(60);
+}
+await nav('down');
+await nav('down');
+if ((await focused()) !== 'start') await nav('left');
+console.log(
+  `对阵画面：摇杆选到 ${await page.locator('[data-spin="opp"] b').textContent()}，焦点在 ${await focused()}`
+);
 await press('confirm');
 await sleep(300);
 console.log(`开始后步骤：${(await state()).step}`);

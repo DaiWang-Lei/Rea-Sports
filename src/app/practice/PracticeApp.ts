@@ -1,6 +1,7 @@
 /**
- * 发球机练习页：连接设备 → 校准（拍头指向电视，Joy-Con 按住 X + ZR）→ 发球机送球，玩家挥拍回球。
- * 每一球给出结果卡片（时机早晚、正反手、力度、旋转），可以调难度、落点区域和画面延迟补偿。
+ * 发球机练习页：连接设备 → 校准（拍头指向电视，Joy-Con 按住 X + ZR）→ 选难度和送球区域 → 发球机送球，玩家挥拍回球。
+ * 每一球给出结果卡片（好球还是出界、时机早晚、正反手、球路）。开始前、暂停都是电视面板；
+ * 多球训练和「录制这局」只在开发时（?debug=1）有。
  */
 import './practice.css';
 import { Sfx } from '@/audio/Sfx';
@@ -23,10 +24,15 @@ import { SHOT_KIND_TEXT } from '@/sim/shot/ShotSpec';
 import { ballSpin } from '@/render/BallView';
 import { Renderer } from '@/render/Renderer';
 import { Hud } from '@/ui/Hud';
+import { howToSeen, howToView } from '@/ui/tv/howto';
+import { spinRow, TvOverlay, tvButton } from '@/ui/tv/TvOverlay';
 import { MotionInput, type SwingEventOut } from '../input/MotionInput';
+import type { PlayContext } from '../shell/context';
 import { latencyMs, screenKey, setLatencyMs } from '../shared/latency';
 import { deviceLine, deviceSwingInput, HumanPaddle, keySwingInput } from '../shared/motionPlay';
+import { loadPrefs } from '../shared/prefs';
 import { deviceWords, SetupFlow } from '../shared/SetupFlow';
+import { calibrateView, SettingsPanel } from '../shared/settingsView';
 import {
   calibLog,
   downloadJson,
@@ -43,22 +49,20 @@ import {
 interface Settings {
   level: FeedLevel;
   zone: FeedZone;
-  leniency: number;
-  /** 多球训练：0 = 单球，1 = 多球（一击球就送下一球） */
+  /** 多球训练（开发用）：0 = 单球，1 = 多球（一击球就送下一球） */
   multi: number;
 }
 
 const SETTINGS_KEY = 'rea-practice';
 
 function loadSettings(): Settings {
-  const def: Settings = { level: 1, zone: 'mixed', leniency: 0.6, multi: 0 };
+  const def: Settings = { level: 1, zone: 'mixed', multi: 0 };
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
     return {
       level: s?.level ?? def.level,
       zone: s?.zone ?? def.zone,
-      leniency: s?.leniency ?? def.leniency,
-      multi: s?.multi ?? def.multi,
+      multi: DEV ? (s?.multi ?? def.multi) : 0,
     };
   } catch {
     return def;
@@ -75,8 +79,14 @@ function saveSettings(s: Settings): void {
   }
 }
 
-type Step = 'connect' | 'point' | 'play';
+/** connect / point = 连接、校准；ready = 开始前（选难度和送球区域）；play = 送球中（含暂停） */
+type Step = 'connect' | 'point' | 'ready' | 'play';
 
+/** 开发用（?debug=1）：多球训练、录制这局、挥拍速度小字 */
+const DEV = new URLSearchParams(location.search).has('debug');
+
+const LEVELS: readonly FeedLevel[] = [1, 2, 3];
+const ZONES: readonly FeedZone[] = ['mixed', 'fh', 'bh'];
 const LEVEL_TEXT: Record<FeedLevel, string> = { 1: '入门', 2: '进阶', 3: '高手' };
 const ZONE_TEXT: Record<FeedZone, string> = { mixed: '全台', fh: '只送正手', bh: '只送反手' };
 const WHIFF_TEXT: Record<WhiffReason, string> = {
@@ -95,8 +105,12 @@ const SPIN_TEXT: Record<string, string> = {
 export class PracticeApp {
   private readonly renderer: Renderer;
   private readonly hud: Hud;
-  private readonly sfx = new Sfx();
-  private readonly input = new MotionInput();
+  private readonly sfx: Sfx;
+  private readonly input: MotionInput;
+  /** 这个页面自己的文字层、按键监听（离开时整块拿掉）；离开了就停 */
+  private readonly layer: HTMLDivElement;
+  private readonly abort = new AbortController();
+  private disposed = false;
   /** 画面上你的球拍（挥拍开始、结束时平滑过渡） */
   private readonly paddleView = new HumanPaddle();
   private sim: FeederSim;
@@ -104,6 +118,10 @@ export class PracticeApp {
   private readonly setup: SetupFlow;
   private keyboard = false;
   private paused = false;
+  /** 开始前的面板按过「开始」了 */
+  private started = false;
+  /** 暂停里正在「重新校准」 */
+  private calibrating = false;
 
   // 时间换算：输入（performance.now 毫秒）↔ 仿真时间
   private clockSim = 0;
@@ -120,42 +138,75 @@ export class PracticeApp {
   private lastPlan: object | null = null;
 
   // DOM
-  private readonly overlay: HTMLDivElement;
   private readonly statsEl: HTMLDivElement;
   private readonly cardEl: HTMLDivElement;
   private readonly statusEl: HTMLDivElement;
   private readonly swingEl: HTMLDivElement;
-  private readonly pauseEl: HTMLDivElement;
+  /** 电视面板：开始前、暂停、设置、校准、怎么玩 */
+  private readonly tv: TvOverlay;
+  private readonly settingsPanel: SettingsPanel;
 
-  constructor(root: HTMLElement) {
+  /** ctx：电视界面里用界面共用的画面、声音、输入，手柄已经连好；不给就自己建（直接用网址打开） */
+  constructor(
+    root: HTMLElement,
+    private readonly ctx: PlayContext | null = null
+  ) {
     root.className = 'game-root practice';
-    const canvas = document.createElement('canvas');
-    canvas.className = 'game-canvas';
-    root.appendChild(canvas);
-    this.renderer = new Renderer(canvas);
-    this.hud = new Hud(root, { near: '我', far: '发球机' });
+    if (ctx) {
+      this.renderer = ctx.renderer;
+      this.hud = ctx.hud;
+      this.hud.setNames({ near: '我', far: '发球机' });
+      this.sfx = ctx.sfx;
+      this.input = ctx.input;
+      this.input.multi = false;
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'game-canvas';
+      root.appendChild(canvas);
+      this.renderer = new Renderer(canvas);
+      this.hud = new Hud(root, { near: '我', far: '发球机' });
+      this.sfx = new Sfx();
+      this.input = new MotionInput();
+    }
     this.sim = this.makeSim();
+    this.layer = document.createElement('div');
+    root.appendChild(this.layer);
+    root = this.layer;
 
     root.insertAdjacentHTML(
       'beforeend',
-      `<div class="pr-stats"></div>
+      `<div class="pr-stats" hidden></div>
        <div class="pr-card"></div>
-       <div class="pr-status"></div>
-       <div class="pr-swing"></div>
-       <div class="pr-overlay"></div>
-       <div class="pr-pause" hidden></div>`
+       <div class="pr-status"${ctx ? ' hidden' : ''}></div>
+       <div class="pr-swing"${DEV ? '' : ' hidden'}></div>`
     );
     this.statsEl = root.querySelector('.pr-stats')!;
     this.cardEl = root.querySelector('.pr-card')!;
     this.statusEl = root.querySelector('.pr-status')!;
     this.swingEl = root.querySelector('.pr-swing')!;
-    this.overlay = root.querySelector('.pr-overlay')!;
-    this.pauseEl = root.querySelector('.pr-pause')!;
-    this.setup = new SetupFlow(this.overlay, this.input, this.hud, this.sfx, {
-      title: '发球机练习',
+    this.tv = new TvOverlay(root, (k) => this.sfx.ui(k));
+    this.settingsPanel = new SettingsPanel(
+      {
+        sfx: this.sfx,
+        input: this.input,
+        players: 1,
+        onChange: (p) => {
+          this.sim.player.handed = p.handed[0];
+          this.sim.clampLeniency(p.leniency);
+        },
+        onBack: () => this.renderPause(),
+      },
+      this.tv
+    );
+    this.setup = new SetupFlow(this.tv, this.input, this.hud, this.sfx, {
+      title: '练习',
       keyboardHelp: 'F 正手、J 反手，按键时机 = 击球时机。',
-      onDone: (msg) => this.startPlay(msg),
-      onKeyboard: () => this.startKeyboard(),
+      onDone: (msg) => this.afterSetup(msg),
+      onKeyboard: () => {
+        this.keyboard = true;
+        this.afterSetup('键盘练习：F 正手、J 反手');
+      },
+      onBack: () => this.exit(),
     });
 
     this.input.events = {
@@ -173,6 +224,7 @@ export class PracticeApp {
         });
       },
       onButton: (b, down) => down && this.onButton(b),
+      onNav: (dir, down) => this.tv.navInput(dir, down),
       onRawReport: (d, id, data, arrival) => {
         if (this.rec?.device === d) this.rec.imu.addReport(id, data, arrival);
       },
@@ -182,24 +234,39 @@ export class PracticeApp {
       onCalibrate: (_d, result) => {
         this.setup.onCalibrate(result);
         if (result === 'done') this.logCalib();
+        // 暂停里「重新校准」：定好了回到暂停
+        if (result === 'done' && this.paused && this.calibrating) this.renderPause();
       },
       onDevicesChanged: () => this.setup.render(),
       onLinkStatus: () => this.setup.linkChanged(),
     };
-    window.addEventListener('keydown', (e) => {
-      this.keysDown.add(e.key.toLowerCase());
-      this.onKey(e);
-    });
-    window.addEventListener('keyup', (e) => this.keysDown.delete(e.key.toLowerCase()));
-    window.addEventListener('pointerdown', () => this.sfx.unlock());
-    this.setup.render();
+    const signal = this.abort.signal;
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        this.keysDown.add(e.key.toLowerCase());
+        this.onKey(e);
+      },
+      { signal }
+    );
+    window.addEventListener('keyup', (e) => this.keysDown.delete(e.key.toLowerCase()), { signal });
+    window.addEventListener('pointerdown', () => this.sfx.unlock(), { signal });
+    // 电视界面里手柄已经加入、定过方向：直接到开始前的面板；键盘玩家（开发用）也一样
+    if (ctx && ctx.players[0]?.device === null) {
+      this.setup.skip();
+      this.keyboard = true;
+      this.showReady();
+    } else if (ctx && this.setup.skipIfReady()) this.showReady();
+    else this.setup.render();
     this.renderStats();
     void this.input.start().then(() => this.setup.render());
     // 冒烟测试 / 调试用：?debug=1 时把实例挂到 window 上
     if (new URLSearchParams(location.search).has('debug')) {
-      void import('@/debug/TuningPanel').then((m) =>
-        m.createTuningPanel(() => this.sim.applyTuning())
-      );
+      // 调参面板只在直接用网址打开时（电视界面里离开练习后它还会留着）
+      if (!ctx)
+        void import('@/debug/TuningPanel').then((m) =>
+          m.createTuningPanel(() => this.sim.applyTuning())
+        );
       (window as unknown as { __practice: PracticeApp }).__practice = this;
     }
     requestAnimationFrame(() => this.loop());
@@ -229,10 +296,10 @@ export class PracticeApp {
     };
   }
 
-  /** 连接、校准之后就是练习本身 */
+  /** 连接、校准之后：开始前的面板，按了开始就是练习本身 */
   private get step(): Step {
     const s = this.setup.step;
-    return s === 'done' ? 'play' : s;
+    return s !== 'done' ? s : this.started ? 'play' : 'ready';
   }
 
   /** 当前屏幕的画面延迟补偿（毫秒） */
@@ -250,7 +317,7 @@ export class PracticeApp {
       seed: Math.floor(Math.random() * 1e9),
       level: s.level,
       zone: s.zone,
-      leniency: s.leniency,
+      leniency: loadPrefs().leniency,
       multi: s.multi,
       handed: this.input?.handed ?? 1,
       tune: tuning,
@@ -261,7 +328,23 @@ export class PracticeApp {
 
   // ---------------------------------------------------------------- 主循环
 
+  /** 回到菜单（电视界面）或首页（直接用网址打开时） */
+  private exit(): void {
+    if (this.ctx) this.ctx.exit();
+    else location.href = './';
+  }
+
+  /** 离开练习（回到电视菜单）：停下主循环，拿掉文字层和按键监听 */
+  dispose(): void {
+    if (this.rec) this.stopRecording();
+    this.disposed = true;
+    this.abort.abort();
+    this.layer.remove();
+    this.hud.clearFlash();
+  }
+
   private loop(): void {
+    if (this.disposed) return;
     const now = performance.now();
     const dt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
     this.last = now;
@@ -349,6 +432,7 @@ export class PracticeApp {
 
   private onKey(e: KeyboardEvent): void {
     this.sfx.unlock();
+    if (this.tv.key(e)) return;
     const k = e.key.toLowerCase();
     if (k === 'escape' || k === 'p') {
       this.togglePause();
@@ -382,12 +466,19 @@ export class PracticeApp {
 
   private handleButton(b: string): void {
     this.sfx.unlock();
+    if (this.setup.onButton(b)) return;
+    // 面板上：A 确定、B 返回；暂停里再按 + 继续
+    if (this.tv.visible) {
+      if (b === 'confirm') this.tv.confirm();
+      else if (b === 'back') this.tv.back();
+      else if (b === 'pause' && this.paused) this.togglePause();
+      return;
+    }
     if (b === 'pause') {
       if (this.step === 'play') this.togglePause();
       return;
     }
-    if (this.setup.onButton(b)) return;
-    if (this.step === 'play' && b === 'recenter') {
+    if (this.step === 'play' && !this.paused && b === 'recenter') {
       const head = deviceWords(this.input.active).head;
       if (this.input.recenter()) this.hud.flash('已回中', '', 0.8);
       else this.hud.flash('没能回中', `把${head}像遥控器一样指向电视再按`, 1.4, 'bad');
@@ -396,21 +487,31 @@ export class PracticeApp {
 
   // ---------------------------------------------------------------- 流程
 
-  private startPlay(msg: string): void {
-    this.paused = false;
-    this.sim.pause(false);
-    this.hud.flash(msg, '发球机开始送球', 1.4, 'good');
-    this.renderStats();
+  private afterSetup(msg: string): void {
+    this.hud.flash(msg, '', 1.2, 'good');
+    this.showReady();
   }
 
-  private startKeyboard(): void {
-    this.keyboard = true;
-    this.startPlay('键盘练习：F 正手、J 反手');
+  /** 开始前的面板（第一次玩先看「怎么玩」） */
+  private showReady(): void {
+    this.started = false;
+    if (howToSeen('practice')) this.renderReady();
+    else this.tv.show(howToView('practice', () => this.renderReady()));
+  }
+
+  private startPlay(): void {
+    this.started = true;
+    this.paused = false;
+    this.tv.hide();
+    this.sim.pause(false);
+    this.hud.flash('开始', '发球机开始送球', 1.2, 'good');
+    this.renderStats();
   }
 
   private togglePause(): void {
     if (this.step !== 'play') return;
     this.paused = !this.paused;
+    this.calibrating = false;
     this.sim.pause(this.paused);
     this.rec?.push({ k: 'pause', rt: performance.now(), paused: this.paused });
     this.renderPause();
@@ -424,6 +525,27 @@ export class PracticeApp {
     this.renderStats();
   }
 
+  /** 难度、送球区域、多球改了：存下来，发球机换一台（这一组的统计清零） */
+  private spinSetting(name: string, d: -1 | 1): void {
+    const s = this.settings;
+    const next = <T>(list: readonly T[], cur: T) =>
+      list[(list.indexOf(cur) + d + list.length) % list.length];
+    if (name === 'level') s.level = next(LEVELS, s.level);
+    else if (name === 'zone') s.zone = next(ZONES, s.zone);
+    else if (name === 'multi') s.multi = s.multi ? 0 : 1;
+    saveSettings(s);
+    this.restartSim();
+    this.sim.pause(true);
+  }
+
+  /** 难度、送球区域（开发时多一行多球） */
+  private settingRows(): string {
+    const s = this.settings;
+    return `${spinRow('level', '难度', LEVEL_TEXT[s.level])}
+      ${spinRow('zone', '送球区域', ZONE_TEXT[s.zone])}
+      ${DEV ? spinRow('multi', '多球（开发）', s.multi ? '多球' : '单球') : ''}`;
+  }
+
   // ---------------------------------------------------------------- 录制这局
 
   private settingsLog(): PracticeSettingsLog {
@@ -433,7 +555,7 @@ export class PracticeApp {
       level: s.level,
       zone: s.zone,
       multi: s.multi,
-      leniency: s.leniency,
+      leniency: this.sim.leniency,
       latencyMs: this.latencyMs,
       screen: screenKey(),
       windowMs: this.sim.windowMs,
@@ -562,34 +684,39 @@ export class PracticeApp {
         : Math.abs(timing) <= 20
           ? '时机正好'
           : `${timing < 0 ? '早' : '晚'} ${Math.abs(timing)}ms`;
-    const spinText =
+    const shot =
       r.kind === null
-        ? '—'
-        : r.smash
-          ? '扣杀'
-          : r.rushed
-            ? '哎呀高球'
-            : `${SHOT_KIND_TEXT[r.kind]}（旋转 ${r.spin >= 0.15 ? '上旋' : r.spin <= -0.15 ? '下旋' : '平'}）`;
+        ? ''
+        : [
+            r.stroke === null ? '' : r.stroke === 'fh' ? '正手' : '反手',
+            r.smash
+              ? '扣杀'
+              : r.rushed
+                ? '哎呀高球'
+                : `${SHOT_KIND_TEXT[r.kind]}${r.spin >= 0.15 ? ' · 上旋' : r.spin <= -0.15 ? ' · 下旋' : ''}`,
+            `力度 ${Math.round(r.power * 100)}%`,
+          ]
+            .filter(Boolean)
+            .join(' · ');
     this.cardEl.innerHTML = `
       <div class="pr-card-title ${good ? 'ok' : 'bad'}">${FEED_RESULT_TEXT[r.result]}</div>
-      <div class="pr-row"><span>时机</span><b>${tText}</b></div>
+      <div class="pr-card-timing">${tText}</div>
       <div class="pr-gauge"><i class="zone"></i><em style="left:${pos}%"></em><small class="l">早</small><small class="r">晚</small></div>
-      <div class="pr-row"><span>正反手</span><b>${r.stroke === null ? '—' : r.stroke === 'fh' ? '正手' : '反手'}</b></div>
-      <div class="pr-row"><span>力度</span><b>${r.kind === null ? '—' : `${Math.round(r.power * 100)}%`}</b></div>
-      <div class="pr-row"><span>球路</span><b>${spinText}</b></div>
-      <div class="pr-row dim"><span>来球</span><b>${SPIN_TEXT[r.feedSpin] ?? ''}</b></div>`;
+      ${shot ? `<div class="pr-card-shot">${shot}</div>` : ''}
+      <div class="pr-card-feed">来球 ${SPIN_TEXT[r.feedSpin] ?? ''}</div>`;
     this.cardEl.classList.add('show');
   }
 
+  /** 左上角：回进几球、连续几球 */
   private renderStats(): void {
     const st = this.sim.stats;
     const total = Object.values(st.results).reduce((a, b) => a + (b ?? 0), 0);
     const inN = st.results.in ?? 0;
-    const med = this.sim.medianTiming();
+    this.statsEl.hidden = this.step !== 'play';
     this.statsEl.innerHTML = `
-      <div class="pr-title">发球机练习 · ${LEVEL_TEXT[this.settings.level]} · ${ZONE_TEXT[this.settings.zone]}${this.settings.multi ? ' · 多球' : ''}</div>
-      <div>回进 <b>${inN}</b> / ${total}${total ? `（${Math.round((inN / total) * 100)}%）` : ''} · 连续 <b>${st.streak}</b>（最佳 ${st.bestStreak}）</div>
-      ${med === null ? '' : `<div class="dim">最近的时机中位数：${med === 0 ? '正好' : `${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms`}</div>`}`;
+      <div class="pr-stat"><span>回进</span><b>${inN}</b><small>/ ${total}</small></div>
+      <div class="pr-stat"><span>连续</span><b>${st.streak}</b><small>最佳 ${st.bestStreak}</small></div>
+      <div class="pr-stat-mode">${LEVEL_TEXT[this.settings.level]} · ${ZONE_TEXT[this.settings.zone]}${this.settings.multi ? ' · 多球' : ''}</div>`;
   }
 
   private showSwing(dir: number, w: number, path: string): void {
@@ -620,82 +747,99 @@ export class PracticeApp {
 
   private lastStatus = 0;
 
-  private renderPause(): void {
-    const p = this.pauseEl;
-    p.hidden = !this.paused;
-    if (!this.paused) return;
-    const s = this.settings;
+  /** 开始前：难度、送球区域，A 开始 */
+  private renderReady(keep = false): void {
+    this.tv.show(
+      {
+        html: `<h2>练习</h2>
+          ${this.settingRows()}
+          <div class="tv-buttons">
+            ${tvButton('start', '开始', true, true)}
+            ${tvButton('howto', '怎么玩')}
+            ${tvButton('home', '回到菜单')}
+          </div>`,
+        hints: [
+          ['▲▼', '选择'],
+          ['◀▶', '修改'],
+          ['A', '确定'],
+          ['B', '回到菜单'],
+        ],
+        onBack: () => this.exit(),
+        onSpin: (name, d) => {
+          this.spinSetting(name, d);
+          this.renderReady(true);
+        },
+        onAct: (act) => {
+          if (act === 'start') this.startPlay();
+          else if (act === 'howto') this.tv.show(howToView('practice', () => this.renderReady()));
+          else if (act === 'home') this.exit();
+        },
+      },
+      keep
+    );
+  }
+
+  /** 暂停：难度、送球区域；继续、重新校准、设置、怎么玩、回到菜单（开发时多「录制这局」） */
+  private renderPause(keep = false): void {
+    if (!this.paused) {
+      this.tv.hide();
+      return;
+    }
+    this.calibrating = false;
+    const st = this.sim.stats;
+    const total = Object.values(st.results).reduce((a, b) => a + (b ?? 0), 0);
     const med = this.sim.medianTiming();
-    const opt = <T extends string | number>(name: string, value: T, cur: T, text: string) =>
-      `<button class="${value === cur ? 'on' : ''}" data-set="${name}" data-val="${value}">${text}</button>`;
-    p.innerHTML = `
-      <div class="pr-panel">
-        <h2>暂停</h2>
-        <div class="pr-setting"><span>难度</span>${([1, 2, 3] as FeedLevel[]).map((l) => opt('level', l, s.level, LEVEL_TEXT[l])).join('')}</div>
-        <div class="pr-setting"><span>落点</span>${(['mixed', 'fh', 'bh'] as FeedZone[]).map((z) => opt('zone', z, s.zone, ZONE_TEXT[z])).join('')}</div>
-        <div class="pr-setting"><span>送球</span>${opt('multi', 0, s.multi, '单球')}${opt('multi', 1, s.multi, '多球')}<span class="dim">多球：一击球就送下一球</span></div>
-        <div class="pr-setting"><span>宽容度</span>${[0.2, 0.6, 1].map((v) => opt('leniency', v, s.leniency, v < 0.4 ? '严格' : v < 0.8 ? '标准' : '宽松')).join('')}</div>
-        <div class="pr-setting"><span>画面延迟补偿<small class="dim">（这块屏幕 ${screenKey()}）</small></span>
-          <button data-lat="-10">−10</button><b class="pr-lat">${this.latencyMs} ms</b><button data-lat="10">+10</button>
-          ${med === null ? '<span class="dim">（打满 5 球后可以按平均时机自动校准）</span>' : `<button data-act="autolat">按我的平均时机校准（${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms）</button>`}
-        </div>
-        <div class="pr-setting"><span>持拍手</span>${opt('handed', 1, this.input.handed, '右手')}${opt('handed', -1, this.input.handed, '左手')}</div>
-        <div class="pr-setting"><span>录制这局</span>
-          ${this.rec ? `<button class="on" data-act="rec-stop">停止并下载（已录 ${this.rec.results} 球）</button>` : '<button data-act="rec-start">开始录制</button>'}
-          <span class="dim">打满 ${RECORD_MAX_BALLS} 球或 ${RECORD_MAX_MS / 60000} 分钟自动停止并下载，把文件发给开发者分析</span>
-        </div>
-        <div class="pr-actions">
-          <button class="primary" data-act="resume">继续练习</button>
-          <button data-act="recal">重新校准拍面</button>
-          <a href="./"><button>返回首页</button></a>
-        </div>
-      </div>`;
-    p.querySelectorAll<HTMLButtonElement>('[data-set]').forEach((b) =>
-      b.addEventListener('click', () => {
-        const name = b.dataset.set!;
-        const raw = b.dataset.val!;
-        if (name === 'handed') {
-          this.input.setHanded(raw === '-1' ? -1 : 1);
-          this.restartSim();
-          this.sim.pause(true);
-        } else {
-          const v = name === 'zone' ? raw : Number(raw);
-          (this.settings as unknown as Record<string, unknown>)[name] = v;
-          saveSettings(this.settings);
-          this.restartSim();
-          this.sim.pause(true);
-        }
-        this.renderPause();
-      })
+    this.tv.show(
+      {
+        html: `<h2>暂停</h2>
+          <p class="tv-note">回进 ${st.results.in ?? 0} / ${total} · 最多连续 ${st.bestStreak}</p>
+          ${this.settingRows()}
+          <div class="tv-buttons">
+            ${tvButton('resume', '继续', true, true)}
+            ${this.keyboard ? '' : tvButton('recal', '重新校准')}
+            ${med === null ? '' : tvButton('autolat', `按我的平均时机校准画面延迟（${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms）`)}
+            ${tvButton('settings', '设置')}
+            ${tvButton('howto', '怎么玩')}
+            ${DEV ? tvButton(this.rec ? 'rec-stop' : 'rec-start', this.rec ? `停止录制并下载（已录 ${this.rec.results} 球）` : '录制这局（开发）') : ''}
+            ${tvButton('home', '回到菜单')}
+          </div>`,
+        hints: [
+          ['▲▼', '选择'],
+          ['◀▶', '修改'],
+          ['A', '确定'],
+          ['B', '继续'],
+        ],
+        onBack: () => this.togglePause(),
+        onSpin: (name, d) => {
+          this.spinSetting(name, d);
+          this.renderPause(true);
+        },
+        onAct: (act) => {
+          if (act === 'resume') this.togglePause();
+          else if (act === 'recal') {
+            this.calibrating = true;
+            this.tv.show(calibrateView(this.input, () => this.renderPause()));
+          } else if (act === 'settings') this.settingsPanel.show();
+          else if (act === 'howto') this.tv.show(howToView('practice', () => this.renderPause()));
+          else if (act === 'home') this.exit();
+          else if (act === 'autolat') {
+            const m = this.sim.medianTiming();
+            if (m !== null) {
+              this.setLatency(this.latencyMs + m);
+              this.sim.stats.timings.length = 0;
+              this.hud.flash('画面延迟已校准', `${this.latencyMs} ms`, 1.2, 'good');
+            }
+            this.renderPause();
+          } else if (act === 'rec-start') {
+            this.startRecording();
+            this.renderPause();
+          } else if (act === 'rec-stop') {
+            this.stopRecording();
+            this.renderPause();
+          }
+        },
+      },
+      keep
     );
-    p.querySelectorAll<HTMLButtonElement>('[data-lat]').forEach((b) =>
-      b.addEventListener('click', () => {
-        this.setLatency(this.latencyMs + Number(b.dataset.lat));
-        this.renderPause();
-      })
-    );
-    p.querySelector('[data-act="autolat"]')?.addEventListener('click', () => {
-      const m = this.sim.medianTiming();
-      if (m !== null) {
-        this.setLatency(this.latencyMs + m);
-        this.sim.stats.timings.length = 0;
-        this.renderPause();
-      }
-    });
-    p.querySelector('[data-act="rec-start"]')?.addEventListener('click', () => {
-      this.startRecording();
-      this.renderPause();
-    });
-    p.querySelector('[data-act="rec-stop"]')?.addEventListener('click', () => {
-      this.stopRecording();
-      this.renderPause();
-    });
-    p.querySelector('[data-act="resume"]')?.addEventListener('click', () => this.togglePause());
-    p.querySelector('[data-act="recal"]')?.addEventListener('click', () => {
-      this.paused = false;
-      this.pauseEl.hidden = true;
-      this.sim.pause(true);
-      this.setup.restart();
-    });
   }
 }

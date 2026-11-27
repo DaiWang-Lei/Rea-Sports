@@ -1,4 +1,5 @@
 /** 画面上的文字层：比分（WSR 在两分之间才显示）、中央大字提示、发球方标记 */
+import './tv/tokens.css';
 import './hud.css';
 import type { Side } from '@/sim/constants';
 

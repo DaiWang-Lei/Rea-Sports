@@ -2,6 +2,7 @@
  * 连续回击：对面的教练不停用拍子把球打过来，回进一球 1 分，有一球没回好这一轮就结束（像 WSR 的 Return Challenge）。
  * 满 10 分后台上摆出纸杯靶子，回球落在靶子上再加 3 分；越往后球越难。最多 4 个人轮流用同一个手柄打，
  * 一轮打完出排行；最高分存在本机。连接、校准和发球机练习共用。
+ * 开始前、打完、排行、暂停都是电视面板（摇杆 / 方向键选、A 确定、B 返回）；第一次进来先看「怎么玩」。
  */
 import '../practice/practice.css';
 import './challenge.css';
@@ -15,11 +16,16 @@ import { ballSpin } from '@/render/BallView';
 import { cpuPaddle } from '@/render/paddlePose';
 import { Renderer } from '@/render/Renderer';
 import { Hud } from '@/ui/Hud';
+import { howToSeen, howToView } from '@/ui/tv/howto';
+import { spinRow, TvOverlay, tvButton } from '@/ui/tv/TvOverlay';
 import { MotionInput, type SwingEventOut } from '../input/MotionInput';
+import type { PlayContext } from '../shell/context';
 import { CROWD_GAIN, loadCrowdVolume } from '../shared/crowdVolume';
 import { latencyMs } from '../shared/latency';
 import { deviceSwingInput, HumanPaddle, keySwingInput } from '../shared/motionPlay';
+import { loadPrefs } from '../shared/prefs';
 import { deviceWords, SetupFlow } from '../shared/SetupFlow';
+import { SettingsPanel } from '../shared/settingsView';
 
 interface Saved {
   /** 几个人轮流打（1..4） */
@@ -60,8 +66,12 @@ const DONE_DELAY = 1.6;
 export class ChallengeApp {
   private readonly renderer: Renderer;
   private readonly hud: Hud;
-  private readonly sfx = new Sfx();
-  private readonly input = new MotionInput();
+  private readonly sfx: Sfx;
+  private readonly input: MotionInput;
+  /** 这个页面自己的文字层、按键监听（离开时整块拿掉）；离开了就停 */
+  private readonly layer: HTMLDivElement;
+  private readonly abort = new AbortController();
+  private disposed = false;
   private readonly paddleView = new HumanPaddle();
   private readonly setup: SetupFlow;
   private sim: ChallengeSim;
@@ -86,37 +96,63 @@ export class ChallengeApp {
   private readonly keysDown = new Set<string>();
 
   // DOM
-  private readonly overlay: HTMLDivElement;
   private readonly boardEl: HTMLDivElement;
-  private readonly panelEl: HTMLDivElement;
-  private readonly pauseEl: HTMLDivElement;
+  /** 电视面板：开始前、打完、排行、暂停、设置、怎么玩 */
+  private readonly tv: TvOverlay;
+  private readonly settingsPanel: SettingsPanel;
   private readonly popEl: HTMLDivElement;
   private popTimer = 0;
 
-  constructor(root: HTMLElement) {
+  /** ctx：电视界面里用界面共用的画面、声音、输入，手柄已经连好；不给就自己建（直接用网址打开） */
+  constructor(
+    root: HTMLElement,
+    private readonly ctx: PlayContext | null = null
+  ) {
     root.className = 'game-root practice challenge';
-    const canvas = document.createElement('canvas');
-    canvas.className = 'game-canvas';
-    root.appendChild(canvas);
-    this.renderer = new Renderer(canvas);
-    this.hud = new Hud(root, { near: '你', far: '教练' });
+    if (ctx) {
+      this.renderer = ctx.renderer;
+      this.hud = ctx.hud;
+      this.hud.setNames({ near: '你', far: '教练' });
+      this.sfx = ctx.sfx;
+      this.input = ctx.input;
+      this.input.multi = false;
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'game-canvas';
+      root.appendChild(canvas);
+      this.renderer = new Renderer(canvas);
+      this.hud = new Hud(root, { near: '你', far: '教练' });
+      this.sfx = new Sfx();
+      this.input = new MotionInput();
+    }
+    this.layer = document.createElement('div');
+    root.appendChild(this.layer);
+    root = this.layer;
     this.sfx.setCrowd(0.11, 0);
     this.sfx.setCrowdLevel(CROWD_GAIN[loadCrowdVolume()]);
     this.sim = this.makeSim();
     root.insertAdjacentHTML(
       'beforeend',
       `<div class="ch-board"></div>
-       <div class="ch-pop"></div>
-       <div class="pr-overlay ch-panel" hidden></div>
-       <div class="pr-overlay"></div>
-       <div class="pr-pause" hidden></div>`
+       <div class="ch-pop"></div>`
     );
     this.boardEl = root.querySelector('.ch-board')!;
     this.popEl = root.querySelector('.ch-pop')!;
-    this.panelEl = root.querySelector('.ch-panel')!;
-    this.overlay = root.querySelector('.pr-overlay:not(.ch-panel)')!;
-    this.pauseEl = root.querySelector('.pr-pause')!;
-    this.setup = new SetupFlow(this.overlay, this.input, this.hud, this.sfx, {
+    this.tv = new TvOverlay(root, (k) => this.sfx.ui(k));
+    this.settingsPanel = new SettingsPanel(
+      {
+        sfx: this.sfx,
+        input: this.input,
+        players: 1,
+        onChange: (p) => {
+          this.sim.player.handed = p.handed[0];
+          this.sim.clampLeniency(p.leniency);
+        },
+        onBack: () => this.renderPause(),
+      },
+      this.tv
+    );
+    this.setup = new SetupFlow(this.tv, this.input, this.hud, this.sfx, {
       title: '连续回击',
       keyboardHelp: 'F 正手、J 反手，按键时机 = 击球时机。',
       onDone: (msg) => this.afterSetup(msg),
@@ -124,22 +160,35 @@ export class ChallengeApp {
         this.keyboard = true;
         this.afterSetup('键盘：F 正手、J 反手');
       },
+      onBack: () => this.exit(),
     });
     this.input.events = {
       onSwing: (e) => this.onDeviceSwing(e),
       onPeak: (e) => this.sim.refineSwing(e.peak.id, e.peak.w, e.features),
       onButton: (b, down) => down && this.onButton(b),
+      onNav: (dir, down) => this.tv.navInput(dir, down),
       onCalibrate: (_d, result) => this.setup.onCalibrate(result),
       onDevicesChanged: () => this.setup.render(),
       onLinkStatus: () => this.setup.linkChanged(),
     };
-    window.addEventListener('keydown', (e) => {
-      this.keysDown.add(e.key.toLowerCase());
-      this.onKey(e);
-    });
-    window.addEventListener('keyup', (e) => this.keysDown.delete(e.key.toLowerCase()));
-    window.addEventListener('pointerdown', () => this.sfx.unlock());
-    this.setup.render();
+    const signal = this.abort.signal;
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        this.keysDown.add(e.key.toLowerCase());
+        this.onKey(e);
+      },
+      { signal }
+    );
+    window.addEventListener('keyup', (e) => this.keysDown.delete(e.key.toLowerCase()), { signal });
+    window.addEventListener('pointerdown', () => this.sfx.unlock(), { signal });
+    // 电视界面里手柄已经加入、定过方向（或是键盘玩家，开发用）：直接到「按 A 开始」
+    if (ctx && ctx.players[0]?.device === null) {
+      this.setup.skip();
+      this.keyboard = true;
+      this.begin();
+    } else if (ctx && this.setup.skipIfReady()) this.begin();
+    else this.setup.render();
     void this.input.start().then(() => this.setup.render());
     // 冒烟测试 / 调试用：?debug=1 时把实例挂到 window 上
     if (new URLSearchParams(location.search).has('debug')) {
@@ -191,6 +240,7 @@ export class ChallengeApp {
     const sim = new ChallengeSim({
       seed: Math.floor(Math.random() * 1e9),
       handed: this.input?.handed ?? 1,
+      leniency: loadPrefs().leniency,
       tune: tuning,
     });
     sim.pause(true);
@@ -199,7 +249,23 @@ export class ChallengeApp {
 
   // ---------------------------------------------------------------- 主循环
 
+  /** 回到菜单（电视界面）或首页（直接用网址打开时） */
+  private exit(): void {
+    if (this.ctx) this.ctx.exit();
+    else location.href = './';
+  }
+
+  /** 离开连续回击（回到电视菜单）：停下主循环，拿掉文字层和按键监听 */
+  dispose(): void {
+    this.disposed = true;
+    this.abort.abort();
+    this.layer.remove();
+    this.hud.clearFlash();
+    this.sfx.setCrowdOn(false);
+  }
+
   private loop(): void {
+    if (this.disposed) return;
     const now = performance.now();
     const dt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
     this.last = now;
@@ -290,18 +356,13 @@ export class ChallengeApp {
 
   private onKey(e: KeyboardEvent): void {
     this.sfx.unlock();
+    if (this.tv.key(e)) return;
     const k = e.key.toLowerCase();
     if (k === 'escape' || k === 'p') {
       this.togglePause();
       return;
     }
-    if (e.repeat) return;
-    if (k === 'enter' || k === ' ') {
-      e.preventDefault();
-      this.onButton('confirm');
-      return;
-    }
-    if (this.step !== 'run' || this.paused) return;
+    if (e.repeat || this.step !== 'run' || this.paused) return;
     if (k === 'f' || k === 'j') {
       // 键盘：F 正手、J 反手；按住 W 拉上旋、S 搓下旋；Shift 大力
       this.keyboard = true;
@@ -320,33 +381,36 @@ export class ChallengeApp {
 
   private onButton(b: string): void {
     this.sfx.unlock();
+    if (this.setup.onButton(b)) return;
+    // 面板上：A 确定、B 返回；暂停里再按 + 继续
+    if (this.tv.visible) {
+      if (b === 'confirm') this.tv.confirm();
+      else if (b === 'back') this.tv.back();
+      else if (b === 'pause' && this.paused) this.togglePause();
+      return;
+    }
     if (b === 'pause') {
       this.togglePause();
       return;
     }
-    if (this.setup.onButton(b)) return;
-    if (this.paused) {
-      if (b === 'confirm') this.togglePause();
-      return;
-    }
-    const step = this.step;
-    if (b === 'recenter' && step === 'run') {
+    if (b === 'recenter' && this.step === 'run' && !this.paused) {
       const head = deviceWords(this.input.active).head;
       if (this.input.recenter()) this.hud.flash('已回中', '', 0.8);
       else this.hud.flash('没能回中', `把${head}像遥控器一样指向电视再按`, 1.4, 'bad');
-      return;
     }
-    if (b !== 'confirm') return;
-    if (step === 'ready') this.startTurn();
-    else if (step === 'done') this.afterTurn();
-    else if (step === 'round') this.newRound();
   }
 
   // ---------------------------------------------------------------- 流程
 
   private afterSetup(msg: string): void {
     this.hud.flash(msg, '', 1.2, 'good');
-    this.newRound();
+    this.begin();
+  }
+
+  /** 准备好了：第一次玩先看「怎么玩」 */
+  private begin(): void {
+    if (howToSeen('challenge')) this.newRound();
+    else this.tv.show(howToView('challenge', () => this.newRound()));
   }
 
   private newRound(): void {
@@ -365,7 +429,7 @@ export class ChallengeApp {
   private startTurn(): void {
     this.stage = 'run';
     this.newBest = false;
-    this.panelEl.hidden = true;
+    this.tv.hide();
     this.sim.pause(false);
     this.hud.flash(this.multi ? `玩家 ${this.turn + 1}` : '开始', '回一球 1 分，漏一球就结束', 1.4);
     this.renderBoard();
@@ -409,6 +473,11 @@ export class ChallengeApp {
     if (this.step !== 'run' || this.sim.over) return;
     this.paused = !this.paused;
     this.renderPause();
+  }
+
+  private restartRound(): void {
+    this.paused = false;
+    this.newRound();
   }
 
   // ---------------------------------------------------------------- 事件
@@ -511,91 +580,129 @@ export class ChallengeApp {
       <span class="ch-best">最高 ${this.saved.best}</span>`;
   }
 
-  private renderPanel(): void {
-    const p = this.panelEl;
+  /** 开始前（几个人轮流）、这一位打完、这一轮的排行 */
+  private renderPanel(keep = false): void {
     const step = this.stage;
-    p.hidden = false;
-    const opt = (n: number) =>
-      `<button class="${n === this.saved.players ? 'on' : ''}" data-players="${n}">${n} 人</button>`;
+    const best = `<p class="tv-note">本机最高 ${this.saved.best} 分</p>`;
     if (step === 'ready') {
       const first = this.turn === 0;
-      p.innerHTML = `
-        <div class="pr-panel ch-card">
+      const n = this.saved.players;
+      this.tv.show(
+        {
+          html: `
           <h2>${this.multi ? `玩家 ${this.turn + 1}` : '连续回击'}</h2>
-          <p class="pr-big">教练会不停把球打过来：回进一球 1 分，漏一球（没接到、出界、下网）就结束。<br/>
-          满 10 分后台上出现纸杯靶子，回球落在靶子上再加 3 分。</p>
-          ${first ? `<div class="pr-setting"><span>几个人轮流打</span>${[1, 2, 3, 4].map(opt).join('')}</div>` : ''}
-          <div class="pr-actions">
-            <button class="primary" data-act="start">开始（A）</button>
-            <a href="./"><button>返回首页</button></a>
-          </div>
-          ${this.multi ? '<p class="dim small">轮流用同一个手柄：一个人打完把手柄交给下一位。</p>' : ''}
-        </div>`;
+          ${best}
+          ${first ? spinRow('players', '几个人轮流', `${n} 人`) : '<p class="tv-note">把手柄交给这一位</p>'}
+          <div class="tv-buttons">
+            ${tvButton('start', '开始', true, true)}
+            ${first ? tvButton('howto', '怎么玩') : ''}
+            ${tvButton('home', '回到菜单')}
+          </div>`,
+          hints: first
+            ? [
+                ['◀▶', '几个人'],
+                ['A', '开始'],
+                ['B', '回到菜单'],
+              ]
+            : [
+                ['A', '开始'],
+                ['B', '回到菜单'],
+              ],
+          onBack: () => this.exit(),
+          onSpin: (_name, d) => {
+            this.saved.players = ((n - 1 + d + 4) % 4) + 1;
+            save(this.saved);
+            this.renderBoard();
+            this.renderPanel(true);
+          },
+          onAct: (act) => {
+            if (act === 'start') this.startTurn();
+            else if (act === 'howto')
+              this.tv.show(howToView('challenge', () => this.renderPanel()));
+            else if (act === 'home') this.exit();
+          },
+        },
+        keep
+      );
     } else if (step === 'done') {
       const score = this.scores[this.turn] ?? 0;
       const last = this.turn + 1 >= this.saved.players;
-      p.innerHTML = `
-        <div class="pr-panel ch-card">
-          <h2>${this.multi ? `玩家 ${this.turn + 1} · ` : ''}这一轮</h2>
-          <div class="ch-final"><b>${score}</b> 分${this.newBest ? '<span class="ch-new">新纪录!</span>' : ''}</div>
-          <p class="dim">本机最高 ${this.saved.best} 分</p>
-          <div class="pr-actions">
-            <button class="primary" data-act="next">${last ? (this.multi ? '看排行（A）' : '再来一次（A）') : '下一位（A）'}</button>
-            <a href="./"><button>返回首页</button></a>
-          </div>
-        </div>`;
+      this.tv.show({
+        html: `
+          <h2>${this.multi ? `玩家 ${this.turn + 1}` : '这一轮'}</h2>
+          <div class="tv-score"><b>${score}</b>分</div>
+          ${this.newBest ? '<p class="tv-note"><span class="tv-tag gold">新纪录!</span></p>' : best}
+          <div class="tv-buttons tv-inline">
+            ${tvButton('next', last ? (this.multi ? '看排行' : '再来一次') : '下一位', true, true)}
+            ${tvButton('home', '回到菜单')}
+          </div>`,
+        hints: [
+          ['A', '确定'],
+          ['B', '回到菜单'],
+        ],
+        onBack: () => this.exit(),
+        onAct: (act) => {
+          if (act === 'next') this.afterTurn();
+          else if (act === 'home') this.exit();
+        },
+      });
     } else if (step === 'round') {
       const rank = this.scores
         .map((s, i) => ({ s, i }))
         .sort((a, b) => b.s - a.s)
-        .map(
-          (r, k) =>
-            `<div class="pr-row ch-rank"><span>${k + 1}. 玩家 ${r.i + 1}</span><b>${r.s} 分</b></div>`
-        )
+        .map((r, k) => `<div><span>${k + 1}. 玩家 ${r.i + 1}</span><b>${r.s} 分</b></div>`)
         .join('');
-      p.innerHTML = `
-        <div class="pr-panel ch-card">
+      this.tv.show({
+        html: `
           <h2>这一轮的排行</h2>
-          ${rank}
-          <p class="dim">本机最高 ${this.saved.best} 分</p>
-          <div class="pr-actions">
-            <button class="primary" data-act="again">再来一轮（A）</button>
-            <a href="./"><button>返回首页</button></a>
-          </div>
-        </div>`;
+          <div class="tv-stats">${rank}</div>
+          ${best}
+          <div class="tv-buttons tv-inline">
+            ${tvButton('again', '再来一轮', true, true)}
+            ${tvButton('home', '回到菜单')}
+          </div>`,
+        hints: [
+          ['A', '确定'],
+          ['B', '回到菜单'],
+        ],
+        onBack: () => this.exit(),
+        onAct: (act) => {
+          if (act === 'again') this.newRound();
+          else if (act === 'home') this.exit();
+        },
+      });
     }
-    p.querySelector('[data-act="next"]')?.addEventListener('click', () => this.afterTurn());
-    p.querySelector('[data-act="start"]')?.addEventListener('click', () => this.startTurn());
-    p.querySelector('[data-act="again"]')?.addEventListener('click', () => this.newRound());
-    p.querySelectorAll<HTMLButtonElement>('[data-players]').forEach((b) =>
-      b.addEventListener('click', () => {
-        this.saved.players = Number(b.dataset.players);
-        save(this.saved);
-        this.renderBoard();
-        this.renderPanel();
-      })
-    );
   }
 
+  /** 暂停：继续、重新开始这一轮、设置、怎么玩、回到菜单 */
   private renderPause(): void {
-    const p = this.pauseEl;
-    p.hidden = !this.paused;
-    if (!this.paused) return;
-    p.innerHTML = `
-      <div class="pr-panel">
+    if (!this.paused) {
+      this.tv.hide();
+      return;
+    }
+    this.tv.show({
+      html: `
         <h2>暂停</h2>
-        <p class="dim">这一轮 ${this.sim.score} 分 · 继续后教练接着供球</p>
-        <div class="pr-actions">
-          <button class="primary" data-act="resume">继续（A / +）</button>
-          <button data-act="restart">重新开始这一轮</button>
-          <a href="./"><button>返回首页</button></a>
-        </div>
-      </div>`;
-    p.querySelector('[data-act="resume"]')?.addEventListener('click', () => this.togglePause());
-    p.querySelector('[data-act="restart"]')?.addEventListener('click', () => {
-      this.paused = false;
-      this.renderPause();
-      this.newRound();
+        <p class="tv-note">这一轮 ${this.sim.score} 分 · 继续后教练接着供球</p>
+        <div class="tv-buttons">
+          ${tvButton('resume', '继续', true, true)}
+          ${tvButton('restart', '重新开始这一轮')}
+          ${tvButton('settings', '设置')}
+          ${tvButton('howto', '怎么玩')}
+          ${tvButton('home', '回到菜单')}
+        </div>`,
+      hints: [
+        ['A', '确定'],
+        ['B', '继续'],
+      ],
+      onBack: () => this.togglePause(),
+      onAct: (act) => {
+        if (act === 'resume') this.togglePause();
+        else if (act === 'restart') this.restartRound();
+        else if (act === 'settings') this.settingsPanel.show();
+        else if (act === 'howto') this.tv.show(howToView('challenge', () => this.renderPause()));
+        else if (act === 'home') this.exit();
+      },
     });
   }
 }
