@@ -16,6 +16,7 @@ import { HumanPlayer, type HumanMissReason, type HumanShot } from './players/Hum
 import {
   createPlayer,
   forehandSign,
+  keepOffTable,
   type PlayerSim,
   readyPosition,
   serveHandPosition,
@@ -23,6 +24,7 @@ import {
   COWER_DROP,
 } from './players/PlayerSim';
 import type { MoverLimits } from './players/Mover';
+import { tossPhysics, tossSpeed } from './players/serveToss';
 import { type PointReason, Referee, type RefereeInput, type RefereeOutput } from './rally/Referee';
 import { type GameResult, Scoring } from './rally/Scoring';
 import {
@@ -271,11 +273,14 @@ export class MatchSim implements BrainHost {
     for (const side of SIDES) {
       const p = this.players[side];
       p.mover.update(dt, p.limits);
+      keepOffTable(p.mover, this.tune);
     }
 
     if (this.ballFree) {
       this.ballEvents.length = 0;
-      stepBall(this.ball, dt, this.t, this.tune.physics, this.rng, this.ballEvents);
+      // 抛球那一段重力放慢（见 serve.tossGravity）
+      const pp = this.phase.kind === 'toss' ? tossPhysics(this.tune) : this.tune.physics;
+      stepBall(this.ball, dt, this.t, pp, this.rng, this.ballEvents);
       for (const e of this.ballEvents) this.onBallEvent(e);
       this.checkFace();
       if (!isFiniteVec(this.ball.p) || !isFiniteVec(this.ball.v)) {
@@ -405,7 +410,7 @@ export class MatchSim implements BrainHost {
   toss(side: Side, height: number): number {
     if (this.phase.kind !== 'preServe' || this.phase.server !== side) return 0;
     const hand = serveHandPosition(this.players[side]);
-    const vz = Math.sqrt(2 * GRAVITY * Math.max(0.05, height));
+    const vz = tossSpeed(height, this.tune);
     this.ball.p = { ...hand };
     this.ball.v = vec3(0, 0, vz);
     this.ball.w = vec3();
@@ -414,7 +419,7 @@ export class MatchSim implements BrainHost {
     this.players[side].tossAt = this.t;
     this.lastBallEventT = this.t;
     this.events.push({ type: 'toss', t: this.t, side });
-    return vz / GRAVITY;
+    return vz / (GRAVITY * this.tune.serve.tossGravity);
   }
 
   cpuToss(side: Side, height: number): number {

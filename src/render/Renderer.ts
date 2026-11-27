@@ -20,8 +20,11 @@ import type { AvatarBody } from './avatar/types';
 import type { PaddlePose } from './paddlePose';
 import { buildScenery, SKY } from './Scenery';
 
-/** 相机：近端身后偏上，俯视整张球台（WSR 视角）。调试面板可改。 */
-export const CAMERA = { y: -4.1, z: 2.75, lookY: 0.3, lookZ: -0.05, fov: 40 };
+/**
+ * 相机：近端身后偏上，俯视整张球台（WSR 视角）。调试面板可改。
+ * follow = 横向跟着自己走的比例：2026-11-27 从 0.25 提到 0.45，人跑到台角、球台侧面接短斜线时还在画面里
+ */
+export const CAMERA = { y: -4.1, z: 2.75, lookY: 0.3, lookZ: -0.05, fov: 40, follow: 0.45 };
 /**
  * 分屏时每半屏的相机（远端的镜像过去）：半屏接近方形，左右窄，视野放大、镜头往后往上才放得下整张球台和对面的人；
  * follow = 横向跟着自己走的比例：跑出边线约 0.5 米接球时，球拍离画面边上还有约 5°
@@ -251,7 +254,7 @@ export class Renderer {
     const k = 1 - Math.exp(-dt / 0.3);
     const kick = frame.kick ?? NO_KICK;
     if (!this.split) {
-      this.aim('near', frame.players.near.body.x, CAMERA, 0.25, k, kick);
+      this.aim('near', frame.players.near.body.x, CAMERA, CAMERA.follow, k, kick);
       this.renderer.render(this.scene, this.cameras.near);
       return;
     }

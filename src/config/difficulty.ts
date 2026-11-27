@@ -36,6 +36,8 @@ export interface CpuLevel {
   spinUse: number;
   curveUse: number;
   driveShare: number;
+  /** 打短的大角度斜线的概率：落在对方边线附近靠网的地方，弹起后从边线飞出台外，对手得跑到球台侧面去接 */
+  angleUse: number;
   /** 遇到高球扣杀的概率 / 接住对方扣杀的概率 */
   smashP: number;
   smashReturnP: number;
@@ -65,6 +67,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     spinUse: 0.1,
     curveUse: 0,
     driveShare: 0.6,
+    angleUse: 0.12,
     smashP: 0.15,
     smashReturnP: 0.05,
     flinchP: 0.6,
@@ -87,6 +90,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     spinUse: 0.25,
     curveUse: 0.05,
     driveShare: 0.6,
+    angleUse: 0.14,
     smashP: 0.3,
     smashReturnP: 0.15,
     flinchP: 0.45,
@@ -109,6 +113,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     spinUse: 0.4,
     curveUse: 0.1,
     driveShare: 0.6,
+    angleUse: 0.17,
     smashP: 0.5,
     smashReturnP: 0.3,
     flinchP: 0.3,
@@ -131,6 +136,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     spinUse: 0.55,
     curveUse: 0.15,
     driveShare: 0.6,
+    angleUse: 0.2,
     smashP: 0.9,
     smashReturnP: 0.45,
     flinchP: 0.2,
@@ -153,6 +159,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     spinUse: 0.7,
     curveUse: 0.2,
     driveShare: 0.6,
+    angleUse: 0.24,
     smashP: 0.97,
     smashReturnP: 0.6,
     flinchP: 0.1,
@@ -198,6 +205,7 @@ export function styledLevel(base: CpuLevel, style: CpuStyle = 'allround'): CpuLe
       lv.speedMin += 0.05;
       lv.speedMax += 0.08;
       lv.aimMargin = Math.max(0.06, lv.aimMargin - 0.05);
+      lv.angleUse += 0.06;
       lv.smashReturnP *= 0.8;
       lv.composure -= 0.03;
       break;
@@ -218,6 +226,7 @@ export function styledLevel(base: CpuLevel, style: CpuStyle = 'allround'): CpuLe
       lv.landingSigma *= 0.75;
       lv.clearanceSigma *= 0.7;
       lv.aimMargin += 0.05;
+      lv.angleUse *= 0.6;
       lv.speedMax -= 0.04;
       lv.smashP *= 0.8;
       break;

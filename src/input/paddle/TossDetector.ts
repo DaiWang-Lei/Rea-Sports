@@ -24,9 +24,12 @@ export const TOSS = {
   maxMs: 150,
   /** 两次抛球之间至少隔多久（毫秒） */
   refractoryMs: 600,
-  /** 高度（米，手以上）：hMin + hSlope·(a_pk − minG)，限制在 hMin..hMax */
-  hMin: 1.4,
-  hMax: 1.8,
+  /**
+   * 高度（米，手以上）：hMin + hSlope·(a_pk − minG)，限制在 hMin..hMax。
+   * 2026-11-27 抛球改慢（serve.tossGravity）后从 1.4–1.8 米降到 1.15–1.45 米：轻轻一抖约 1.2 秒到理想击球点，用力抖约 1.35 秒
+   */
+  hMin: 1.15,
+  hMax: 1.45,
   hSlope: 0.25,
 };
 

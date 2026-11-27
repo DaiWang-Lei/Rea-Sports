@@ -22,6 +22,7 @@ import {
   bodyForContact,
   createPlayer,
   forehandSign,
+  keepOffTable,
   type PlayerSim,
   readyPosition,
   type Stroke,
@@ -328,6 +329,7 @@ export class FeederSim {
 
     this.updateMover();
     this.player.mover.update(dt, this.player.limits);
+    keepOffTable(this.player.mover, this.tune);
 
     if (this.ballFree) {
       this.ballEvents.length = 0;

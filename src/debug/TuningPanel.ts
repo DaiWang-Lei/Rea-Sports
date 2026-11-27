@@ -36,7 +36,8 @@ const GROUPS: Array<[string, string, Record<string, number>, Spec[]]> = [
     'serve',
     tuning.serve,
     [
-      ['buttonTossHeight', '按键抛高（m）', 0.2, 1.4, 0.01],
+      ['tossGravity', '抛球重力倍率', 0.3, 1, 0.01],
+      ['buttonTossHeight', '按键抛高（m）', 0.2, 1.8, 0.01],
       ['cpuTossMin', '电脑抛高下限（m）', 0.3, 2.5, 0.01],
       ['cpuTossMax', '电脑抛高上限（m）', 0.3, 2.5, 0.01],
       ['sweetAboveHand', '理想击球点（手上方 m）', 0, 0.6, 0.01],
@@ -54,7 +55,7 @@ const GROUPS: Array<[string, string, Record<string, number>, Spec[]]> = [
     [
       ['minG', '触发（G）', 1.05, 3, 0.01],
       ['maxOmega', '允许的转动（rad/s）', 1, 20, 0.1],
-      ['hMin', '最低抛高（m）', 0.1, 1.2, 0.01],
+      ['hMin', '最低抛高（m）', 0.1, 1.8, 0.01],
       ['hMax', '最高抛高（m）', 0.3, 2, 0.01],
       ['hSlope', '每多 1G 多抛（m）', 0, 1, 0.01],
     ],
@@ -135,6 +136,7 @@ const CPU_SPECS: Spec[] = [
   ['clearanceSigma', '过网误差（m）', 0, 0.08, 0.001],
   ['composure', '抗压（越大越少哎呀）', 0, 1.5, 0.01],
   ['spinUse', '用旋转概率', 0, 1, 0.01],
+  ['angleUse', '短斜线概率', 0, 0.6, 0.01],
   ['curveUse', '用侧旋概率', 0, 1, 0.01],
   ['smashP', '扣杀概率', 0, 1, 0.01],
   ['smashReturnP', '接住扣杀概率', 0, 1, 0.01],

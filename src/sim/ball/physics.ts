@@ -90,7 +90,7 @@ function accel(
   const speed = Math.sqrt(vx * vx + vy * vy + vz * vz);
   let ax = -pp.dragK * speed * vx;
   let ay = -pp.dragK * speed * vy;
-  let az = -pp.dragK * speed * vz - GRAVITY;
+  let az = -pp.dragK * speed * vz - GRAVITY * pp.gravityScale;
   if (speed > 1e-6) {
     // c = ω × v
     const cx = wy * vz - wz * vy;

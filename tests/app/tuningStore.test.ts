@@ -49,10 +49,10 @@ describe('手感参数的本地覆盖', () => {
     applyOverrides({
       tuning: { serve: { nope: 1, powerMs: Number.NaN }, unknownGroup: { a: 1 } },
       cpu: { '9': { vMax: 9 }, '2': { name: 3 } as never },
-      toss: { hMax: 1.4 },
+      toss: { hMax: 1.7 },
     } as TuningOverrides);
     expect(overrideCount()).toBe(1);
-    expect(TOSS.hMax).toBe(1.4);
+    expect(TOSS.hMax).toBe(1.7);
     expect(CPU_LEVELS[1].name).toBe('初级');
   });
 });

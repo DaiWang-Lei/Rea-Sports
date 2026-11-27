@@ -41,18 +41,18 @@ describe('向上抖手柄抛球', () => {
     const hard = run(flick(500, 90, 4.5), 1500);
     expect(soft).toHaveLength(1);
     expect(hard).toHaveLength(1);
-    expect(hard[0].height).toBeGreaterThan(soft[0].height + 0.2);
+    expect(hard[0].height).toBeGreaterThan(soft[0].height + 0.15);
     expect(soft[0].peakG).toBeCloseTo(1.8, 1);
     // 在加速结束时触发（球离手）
     expect(soft[0].t).toBeGreaterThan(540);
     expect(soft[0].t).toBeLessThan(600);
   });
 
-  it('平时轻轻一抖（1.3–1.6G）就和按键一样抛 1.4 米左右，用力抖更高，最高 1.8 米', () => {
-    expect(tossHeight(1.3)).toBeCloseTo(1.4);
-    expect(tossHeight(1.6)).toBeCloseTo(1.475);
-    expect(tossHeight(2.8)).toBeCloseTo(1.775);
-    expect(tossHeight(20)).toBeCloseTo(1.8);
+  it('平时轻轻一抖（1.3–1.6G）就和按键一样抛 1.15 米左右，用力抖更高，最高 1.45 米', () => {
+    expect(tossHeight(1.3)).toBeCloseTo(1.15);
+    expect(tossHeight(1.6)).toBeCloseTo(1.225);
+    expect(tossHeight(2.4)).toBeCloseTo(1.425);
+    expect(tossHeight(20)).toBeCloseTo(1.45);
   });
 
   it('只超过阈值 1–2 个样本（一下磕碰）不触发', () => {

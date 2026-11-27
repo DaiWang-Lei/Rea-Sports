@@ -421,6 +421,9 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
     eOpen +
     0.35 * eIn +
     rng.normal(0, (0.05 + 0.05 * q) * noise);
+  // 打得很早 / 很晚的大角度斜线又斜又短：落在边线附近靠网，弹起后从边线飞出台外（对手得跑到球台侧面去接），球也慢一些
+  const sharp = clamp((Math.abs(u) - 0.7) / 0.3, 0, 1);
+  depth -= 0.45 * sharp;
   depth = clamp(depth, 0.25, 1.75);
 
   // ---- 过网高度：拍面压得太低下网；重下旋来球没有提拉也会下网
@@ -440,7 +443,7 @@ export function mapSwing(ctx: MapContext, rng: Rng, tune: Tuning): MappedShot {
     spec: {
       kind,
       target: { x: u * TABLE.halfWidth * rs, y: dir * depth },
-      speedH,
+      speedH: speedH * (1 - 0.15 * sharp),
       topspin,
       sidespin,
       clearance,

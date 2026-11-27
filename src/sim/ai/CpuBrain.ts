@@ -228,6 +228,7 @@ export class CpuBrain {
       smashBeaten: this.incoming.beaten,
       oppX: host.player(otherSide(this.side)).mover.x,
       rallyHits: host.rallyHits,
+      pace: host.pace,
     };
   }
 }

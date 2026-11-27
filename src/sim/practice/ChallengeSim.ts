@@ -7,7 +7,7 @@
  */
 import { type Vec3, vec3 } from '@/core/vec3';
 import { BALL, SIM_DT, TABLE } from '../constants';
-import { bodyForContact, createPlayer, type PlayerSim } from '../players/PlayerSim';
+import { bodyForContact, createPlayer, keepOffTable, type PlayerSim } from '../players/PlayerSim';
 import {
   type FeedLevel,
   type FeederOptions,
@@ -110,6 +110,7 @@ export class ChallengeSim extends FeederSim {
     if (this.coach.swing && this.t > this.coach.swing.end + 0.25) this.coach.swing = null;
     super.tick();
     this.coach.mover.update(SIM_DT, this.coach.limits);
+    keepOffTable(this.coach.mover, this.tune);
     this.updateCups();
     this.checkCoachFace();
   }

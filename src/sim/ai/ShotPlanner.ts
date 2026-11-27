@@ -17,8 +17,15 @@ import {
   type ShotSpec,
 } from '../shot/ShotSpec';
 
+/**
+ * 这一板打快还是打慢（由来球决定，不是随机）：attack 来球好打就抢攻、control 来球凶就挡或搓、
+ * angle 短斜线（球短所以慢）、normal 正常相持
+ */
+export type Tempo = 'attack' | 'normal' | 'control' | 'angle';
+
 export interface ShotIntent {
   kind: ShotKind;
+  tempo: Tempo;
   /** 目标落点（已带落点散布，未加时机偏移） */
   target: { x: number; y: number };
   speedMul: number;
@@ -39,6 +46,8 @@ export interface IncomingInfo {
   oppX: number;
   /** 本回合已击球次数 */
   rallyHits: number;
+  /** 节奏（6 分制 1，11 分制更快） */
+  pace: number;
 }
 
 /**
@@ -106,6 +115,19 @@ export function incomingThreat(contact: ContactPlan, smash: boolean, pace = 1): 
 /** 从台边一侧击球时打大角度斜线的比例 */
 const CROSS_COURT = 0.7;
 
+/**
+ * 快慢（节奏倍率，乘在等级的球速上）。来球比自己的抗压阈值低 ATTACK_EASE 以上算好打，按 attackP 的概率抢攻；
+ * 来球威胁超过抗压阈值就挡、搓，回得慢。短斜线球短，也慢。正常相持在 1 附近
+ */
+const TEMPO = {
+  attack: [1.12, 1.28],
+  normal: [0.95, 1.05],
+  control: [0.8, 0.9],
+  angle: [0.78, 0.88],
+} as const;
+const ATTACK_EASE = 0.12;
+const ATTACK_P = 0.55;
+
 /** 来球的上旋分量（正 = 上旋）相对接球方前进方向而言 */
 function incomingTopspin(contact: ContactPlan): number {
   const v = contact.v;
@@ -122,11 +144,16 @@ export function chooseIntent(info: IncomingInfo, lv: CpuLevel, rng: Rng): ShotIn
   const sigma = lv.landingSigma * pressure.sigmaScale;
   const xMax = TABLE.halfWidth - margin;
 
+  // 短斜线：落在对方边线附近、靠网的地方，弹起后从边线飞出台外，对手得跑到球台侧面去接；球短，所以慢一些
+  const myX = info.contact.p.x;
+  const angle = !info.popup && rng.chance(lv.angleUse);
   // 左右：常打大角度斜线——从自己击球的一侧打到对面另一侧的边线附近，球落台后带着横向速度往台外飞，
   // 对手得跑出边线去接（WSR 里很常见）；其余打向对手站位的另一侧，或者随便打
-  const myX = info.contact.p.x;
   let x: number;
-  if (Math.abs(myX) > 0.2 && rng.chance(CROSS_COURT)) {
+  if (angle) {
+    const toward = Math.abs(myX) > 0.15 ? -Math.sign(myX) : info.oppX > 0 ? -1 : 1;
+    x = toward * rng.uniform(0.56, 0.7) * TABLE.halfWidth;
+  } else if (Math.abs(myX) > 0.2 && rng.chance(CROSS_COURT)) {
     x = -Math.sign(myX) * rng.uniform(0.5 * xMax, 0.9 * xMax);
   } else if (rng.chance(0.65)) {
     const away = info.oppX > 0 ? -1 : 1;
@@ -134,21 +161,35 @@ export function chooseIntent(info: IncomingInfo, lv: CpuLevel, rng: Rng): ShotIn
   } else {
     x = rng.uniform(-xMax, xMax);
   }
-  const depth = rng.uniform(0.55, TABLE.halfLength - Math.max(0.08, margin * 0.5));
+  const depth = angle
+    ? rng.uniform(0.32, 0.55)
+    : rng.uniform(0.55, TABLE.halfLength - Math.max(0.08, margin * 0.5));
+  const spread = angle ? sigma * 0.5 : sigma;
   const target = {
-    x: x + rng.normal(0, sigma),
-    y: dir * (depth + rng.normal(0, sigma)),
+    x: x + rng.normal(0, spread),
+    y: dir * (depth + rng.normal(0, spread)),
   };
+
+  // 快慢：来球好打就抢攻，来球凶就挡、搓
+  const ease = lv.composure - incomingThreat(info.contact, info.smash, info.pace);
+  const tempo: Tempo = angle
+    ? 'angle'
+    : ease > ATTACK_EASE && rng.chance(ATTACK_P)
+      ? 'attack'
+      : ease < 0
+        ? 'control'
+        : 'normal';
 
   let kind: ShotKind;
   const sIn = incomingTopspin(info.contact);
   if (sIn < -0.5) {
     kind = rng.chance(0.6) ? 'cut' : 'drive';
   } else {
+    // 抢攻多拉上旋，挡、搓多回下旋
     const w = [
       Math.max(0.1, 1 - lv.spinUse - lv.curveUse), // normal
-      lv.spinUse * lv.driveShare, // drive
-      lv.spinUse * (1 - lv.driveShare), // cut
+      lv.spinUse * lv.driveShare * (tempo === 'attack' ? 1.8 : 1), // drive
+      lv.spinUse * (1 - lv.driveShare) * (tempo === 'control' ? 1.8 : 1), // cut
       lv.curveUse, // curve
     ];
     kind = (['normal', 'drive', 'cut', 'curve'] as const)[rng.pickWeighted(w)];
@@ -158,7 +199,8 @@ export function chooseIntent(info: IncomingInfo, lv: CpuLevel, rng: Rng): ShotIn
   let sidespin = 0;
   switch (kind) {
     case 'normal':
-      topspin = rng.uniform(40, 110);
+      // 抢攻打得快，要多带上旋才压得住（不然出界）
+      topspin = tempo === 'attack' ? rng.uniform(110, 170) : rng.uniform(40, 110);
       break;
     case 'drive':
       topspin = rng.uniform(150, 260);
@@ -173,10 +215,20 @@ export function chooseIntent(info: IncomingInfo, lv: CpuLevel, rng: Rng): ShotIn
     default:
       break;
   }
+  if (angle) {
+    // 短斜线带往外拐的侧旋：落台后球斜着往台外飞，对手要跑到球台侧面接
+    kind = 'curve';
+    topspin = rng.uniform(40, 80);
+    sidespin = -Math.sign(target.x) * dir * rng.uniform(140, 180);
+  }
   return {
     kind,
+    tempo,
     target,
-    speedMul: rng.uniform(lv.speedMin, lv.speedMax) * pressure.speed,
+    speedMul:
+      rng.uniform(lv.speedMin, lv.speedMax) *
+      rng.uniform(TEMPO[tempo][0], TEMPO[tempo][1]) *
+      pressure.speed,
     topspin,
     sidespin,
     clearance: 0.06 + rng.normal(0, lv.clearanceSigma * 1.5),

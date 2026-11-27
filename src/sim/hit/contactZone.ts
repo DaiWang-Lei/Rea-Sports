@@ -8,6 +8,7 @@
  */
 import type { Vec3 } from '@/core/vec3';
 import type { Tuning } from '@/config/tuning';
+import { clamp } from '@/core/math';
 import { type BallState, predict, type Prediction } from '../ball/physics';
 import { type Side, sideDir, SIM_DT, TABLE } from '../constants';
 
@@ -82,7 +83,11 @@ export function planContact(
       if (t >= endT) break;
       const s = pred.states[i];
       if (descendingOnly && s.v.z > 0) continue;
-      const j = ((s.p.z - zStar) / 0.12) ** 2 + ((s.p.y - yStar) / 0.3) ** 2;
+      // 斜着往台外飞的球：出了台边就不再非等到台后接（前后的权重放松），离中线太远就宁可早一点（在台边）接
+      const out = clamp((Math.abs(s.p.x) - TABLE.halfWidth) / 0.4, 0, 1);
+      const wide = Math.max(0, Math.abs(s.p.x) - c.wideX) / c.wideSpan;
+      const j =
+        ((s.p.z - zStar) / 0.12) ** 2 + ((s.p.y - yStar) / (0.3 + 0.6 * out)) ** 2 + wide * wide;
       if (j < bestJ) {
         bestJ = j;
         best = i;

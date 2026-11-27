@@ -1,10 +1,20 @@
 /**
- * 抛球后的理想发球点（玩家和电脑共用）：按真实轨迹（带空气阻力）找球的最高点，
+ * 抛球后的理想发球点（玩家和电脑共用）：按抛球的轨迹（带空气阻力，重力按 serve.tossGravity 放慢）找球的最高点，
  * 球下落经过手上方 serve.sweetAboveHand 的时刻，以及球掉到重抛线（手下方 rules.tossDropBelow）之前的最后时刻。
  */
 import type { Tuning } from '@/config/tuning';
-import { type BallState, predict } from '../ball/physics';
-import { SIM_DT } from '../constants';
+import { type BallState, type PhysicsParams, predict } from '../ball/physics';
+import { GRAVITY, SIM_DT } from '../constants';
+
+/** 抛球那一段用的物理参数（重力放慢） */
+export function tossPhysics(tune: Tuning): PhysicsParams {
+  return { ...tune.physics, gravityScale: tune.serve.tossGravity };
+}
+
+/** 抛到手上方 height 米要的初速度（不计空气阻力） */
+export function tossSpeed(height: number, tune: Tuning): number {
+  return Math.sqrt(2 * GRAVITY * tune.serve.tossGravity * Math.max(0.05, height));
+}
 
 export interface TossPlan {
   /** 球到最高点的时刻 */
@@ -21,7 +31,7 @@ export interface TossPlan {
 export function planToss(ball: BallState, now: number, tune: Tuning): TossPlan {
   const sweetZ = ball.p.z + tune.serve.sweetAboveHand;
   const floorZ = ball.p.z - tune.rules.tossDropBelow;
-  const pred = predict(ball, now, 2.5, tune.physics);
+  const pred = predict(ball, now, 3, tossPhysics(tune));
   let apex = now;
   let topZ = -Infinity;
   let ideal = NaN;

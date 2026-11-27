@@ -86,11 +86,10 @@ describe('节奏：对照 NSSR 实机视频', () => {
     }
   });
 
-  it('电脑高抛发球：从抛起到击球约 0.95 秒', () => {
-    // 实机约 1.15 秒；我们是真实重力，再高最高点就出画了
+  it('电脑高抛发球：从抛起到击球约 1.2 秒（实机约 1.15 秒，抛球那一段重力放慢）', () => {
     const t = summarize(rhythmOf(3, 2).tossToServe).median;
-    expect(t).toBeGreaterThan(0.9);
-    expect(t).toBeLessThan(1.02);
+    expect(t).toBeGreaterThan(1.1);
+    expect(t).toBeLessThan(1.3);
   });
 });
 

@@ -59,11 +59,32 @@ export function bodyForContact(
   const m = tune.mover;
   const offset = stroke === 'fh' ? m.forehandOffset : -m.backhandOffset;
   const x = contact.x - offset * forehandSign(p);
-  const y =
-    p.side === 'near'
-      ? Math.min(contact.y - 0.45, -m.minDepth)
-      : Math.max(contact.y + 0.45, m.minDepth);
-  return { x, y };
+  // 自己这一边在 y 的哪个方向；身体一般在击球点后面 0.45 米，击球点出了台边越远，越是站在球的侧面而不是后面
+  const own = p.side === 'near' ? -1 : 1;
+  const out = Math.min(1, Math.max(0, (Math.abs(contact.x) - TABLE.halfWidth) / 0.5));
+  const back = own * (contact.y + own * 0.45 * (1 - 0.6 * out));
+  // 在台面左右以外可以往前站到球台侧面，否则站在台端后面
+  const beside = Math.abs(x) >= TABLE.halfWidth + m.sideClear;
+  return { x, y: own * Math.max(back, beside ? m.netMin : m.minDepth) };
+}
+
+/**
+ * 人不能走进球台占的地方（台面加上身体离台边、台端的余量）：走进去了就推回到最近的那条边上。
+ * 从台后去球台侧面时，先沿着台端往外走，绕过台角再往前
+ */
+export function keepOffTable(m: Mover, tune: Tuning): void {
+  const xLim = TABLE.halfWidth + tune.mover.sideClear;
+  const yLim = tune.mover.minDepth;
+  const ax = Math.abs(m.x);
+  const ay = Math.abs(m.y);
+  if (ax >= xLim || ay >= yLim) return;
+  if (xLim - ax < yLim - ay) {
+    m.x = Math.sign(m.x || 1) * xLim;
+    m.vx = 0;
+  } else {
+    m.y = Math.sign(m.y || 1) * yLim;
+    m.vy = 0;
+  }
 }
 
 export function readyPosition(side: Side, x: number, tune: Tuning): { x: number; y: number } {
