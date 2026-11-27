@@ -11,7 +11,7 @@
 import { otherSide, type Side } from '../constants';
 
 export type PointReason =
-  'serveFault' | 'net' | 'out' | 'ownSide' | 'doubleBounce' | 'missed' | 'volley';
+  'serveFault' | 'net' | 'out' | 'ownSide' | 'doubleBounce' | 'missed' | 'volley' | 'face' | 'body';
 
 export const REASON_TEXT: Record<PointReason, string> = {
   serveFault: '发球失误',
@@ -21,6 +21,8 @@ export const REASON_TEXT: Record<PointReason, string> = {
   doubleBounce: '两跳',
   missed: '没接到',
   volley: '未落台击球',
+  face: '打到脸上',
+  body: '打到身上',
 };
 
 export type RefereeInput =

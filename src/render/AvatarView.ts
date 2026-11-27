@@ -75,9 +75,11 @@ export class AvatarView {
     paddle: PaddlePose,
     dt: number,
     /** 球的位置（头跟着球转；不在场上时 null） */
-    ball: Vec3 | null = null
+    ball: Vec3 | null = null,
+    /** 接不住扣杀、缩头弯腰躲着 */
+    cowering = false
   ): void {
-    const pose = this.motion.update(body, facing, shoulderSide, paddle, dt, ball);
+    const pose = this.motion.update(body, facing, shoulderSide, paddle, dt, ball, cowering);
     for (const b of this.shown) b.apply(pose);
     this.paddlePos = pose.paddle.pos;
   }

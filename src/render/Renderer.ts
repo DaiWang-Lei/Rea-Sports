@@ -148,10 +148,13 @@ export class Renderer {
     this.effects.hit(p, strong, this.lastT);
   }
 
-  /** 每分结束：得分的一方挥拳跳起，失分的一方低头（赢下整局时庆祝得久一点） */
-  pointReaction(winner: Side, gameOver = false): void {
+  /**
+   * 每分结束：得分的一方挥拳跳起，失分的一方低头（赢下整局时庆祝得久一点）；
+   * hit = 失分的一方是被球打到了脸上 / 身上：头往后一仰、手捂脸
+   */
+  pointReaction(winner: Side, gameOver = false, hit = false): void {
     this.avatars[winner].react('win', gameOver ? 3 : 1.6);
-    this.avatars[otherSide(winner)].react('lose', gameOver ? 3 : 1.6);
+    this.avatars[otherSide(winner)].react(hit ? 'ouch' : 'lose', gameOver ? 3 : 1.6);
   }
 
   /** 落台特效 */
@@ -177,7 +180,8 @@ export class Renderer {
           forehandSign(rp.player),
           rp.paddle,
           dt,
-          frame.ballVisible ? frame.ball : null
+          frame.ballVisible ? frame.ball : null,
+          rp.player.cowering
         );
     }
     this.machine.update(frame.machine ?? null);

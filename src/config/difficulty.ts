@@ -38,6 +38,8 @@ export interface CpuLevel {
   /** 遇到高球扣杀的概率 / 接住对方扣杀的概率 */
   smashP: number;
   smashReturnP: number;
+  /** 接不住扣杀时愣在原地（不躲）的概率：愣住的人可能被球打到脸上、身上 */
+  flinchP: number;
   /** 预测落点的噪声（米） / 假动作概率 */
   predSigma: number;
   feintP: number;
@@ -63,6 +65,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     curveUse: 0,
     smashP: 0.15,
     smashReturnP: 0.05,
+    flinchP: 0.6,
     predSigma: 0.12,
     feintP: 0,
     composure: 0.21,
@@ -83,6 +86,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     curveUse: 0.05,
     smashP: 0.3,
     smashReturnP: 0.15,
+    flinchP: 0.45,
     predSigma: 0.1,
     feintP: 0,
     composure: 0.24,
@@ -103,6 +107,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     curveUse: 0.1,
     smashP: 0.5,
     smashReturnP: 0.3,
+    flinchP: 0.3,
     predSigma: 0.08,
     feintP: 0.05,
     composure: 0.26,
@@ -123,6 +128,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     curveUse: 0.15,
     smashP: 0.9,
     smashReturnP: 0.45,
+    flinchP: 0.2,
     predSigma: 0.07,
     feintP: 0.1,
     composure: 0.29,
@@ -143,6 +149,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     curveUse: 0.2,
     smashP: 0.97,
     smashReturnP: 0.6,
+    flinchP: 0.1,
     predSigma: 0.06,
     feintP: 0.15,
     composure: 0.31,

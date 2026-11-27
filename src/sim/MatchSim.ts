@@ -11,7 +11,7 @@ import { CpuBrain, type BrainHost } from './ai/CpuBrain';
 import type { HitDecision, WhiffReason } from './ai/ShotPlanner';
 import type { SwingFeatures, SwingInput, SwingOutcome } from './hit/HitResolver';
 import { ballState, type BallEvent, type BallState, stepBall } from './ball/physics';
-import { GRAVITY, otherSide, type Side, SIM_DT } from './constants';
+import { BALL, GRAVITY, otherSide, type Side, sideDir, SIM_DT } from './constants';
 import { HumanPlayer, type HumanMissReason, type HumanShot } from './players/HumanPlayer';
 import {
   createPlayer,
@@ -20,6 +20,7 @@ import {
   readyPosition,
   serveHandPosition,
   type Stroke,
+  COWER_DROP,
 } from './players/PlayerSim';
 import type { MoverLimits } from './players/Mover';
 import { type PointReason, Referee, type RefereeInput, type RefereeOutput } from './rally/Referee';
@@ -79,6 +80,8 @@ export type MatchEvent =
   | { type: 'net'; t: number; part: 'cord' | 'body'; impact: number; p: Vec3 }
   | { type: 'floor'; t: number; impact: number; p: Vec3 }
   | { type: 'sideHit'; t: number; impact: number; p: Vec3 }
+  /** 球落到接球方台面后没被接住，打到了接球人的脸上 / 身上（side = 被打中的人） */
+  | { type: 'bodyHit'; t: number; side: Side; part: 'face' | 'body'; p: Vec3 }
   | { type: 'toss'; t: number; side: Side }
   | {
       type: 'point';
@@ -128,6 +131,16 @@ export interface MatchStats {
 
 const DEFAULT_HUMAN_LIMITS: MoverLimits = { vMax: 3.4, aMax: 16, gain: 6, yFactor: 0.6 };
 const LET_PAUSE = 1.2;
+/**
+ * 人的身体（球打到人用），和画面上的人物大致一样（站成准备姿势、膝盖微弯时），往球台方向偏 fwd 米：
+ * 头是球（头心高 z、半径 r），躯干是竖着的胶囊（从 z0 到 z1、半径 r）；
+ * 缩头弯腰躲扣杀时整个人矮 COWER_DROP 米（和画面上一样）
+ */
+const HEAD = { z: 1.4, r: 0.2 };
+const TORSO = { z0: 0.78, z1: 1.22, r: 0.17 };
+const BODY_FWD = 0.03;
+/** 球从脸上弹开：法向留下多少速度、旋转留下多少 */
+const FACE_BOUNCE = { e: 0.45, spin: 0.3 };
 /** 轮到人发球后，多久可以抛球（秒）；抛球没打到、球落下后再等这么久 */
 const HUMAN_TOSS_DELAY = 0.5;
 const HUMAN_RETOSS_DELAY = 0.3;
@@ -263,6 +276,7 @@ export class MatchSim implements BrainHost {
       this.ballEvents.length = 0;
       stepBall(this.ball, dt, this.t, this.tune.physics, this.rng, this.ballEvents);
       for (const e of this.ballEvents) this.onBallEvent(e);
+      this.checkFace();
       if (!isFiniteVec(this.ball.p) || !isFiniteVec(this.ball.v)) {
         throw new Error(`球的状态出现非法数值 t=${this.t.toFixed(3)}`);
       }
@@ -293,6 +307,7 @@ export class MatchSim implements BrainHost {
     for (const side of SIDES) {
       const p = this.players[side];
       p.swing = null;
+      p.cowering = false;
       const r = readyPosition(side, 0, this.tune);
       // 发球方：电脑随机站位，人站在中间偏正手一点
       let x = r.x;
@@ -608,6 +623,52 @@ export class MatchSim implements BrainHost {
     }
   }
 
+  /**
+   * 球打到人：接不住扣杀、缩头躲着的人（见 CpuBrain：等级越低越容易愣住），球合法落在他这边台面后
+   * 撞上了他的头或身子。球弹开，这一分归击球方（像 WSR 的「打到脸上」，打低等级的对手时常有）。
+   * 正常站位、只是没打到的人不算：他站在球的侧面，球从身边过去
+   */
+  private checkFace(): void {
+    if (this.phase.kind !== 'play' || this.referee.state !== 'rallyBounced' || !this.inFlight)
+      return;
+    const side = otherSide(this.inFlight.hitter);
+    if (!this.players[side].cowering) return;
+    const p = this.players[side];
+    const m = p.mover;
+    const b = this.ball.p;
+    const x = m.x;
+    const y = m.y + sideDir(side) * BODY_FWD;
+    const drop = COWER_DROP;
+    // 离球最近的身体上的点：头心，或躯干中轴上最近的一点
+    const head = vec3(x, y, HEAD.z - drop);
+    const torso = vec3(x, y, Math.min(TORSO.z1 - drop, Math.max(TORSO.z0 - drop, b.z)));
+    const dHead = Math.hypot(b.x - head.x, b.y - head.y, b.z - head.z);
+    const dTorso = Math.hypot(b.x - torso.x, b.y - torso.y, b.z - torso.z);
+    const part = dHead - HEAD.r < dTorso - TORSO.r ? 'face' : 'body';
+    const c = part === 'face' ? head : torso;
+    const d = part === 'face' ? dHead : dTorso;
+    const rad = part === 'face' ? HEAD.r : TORSO.r;
+    if (d > rad + BALL.radius || d < 1e-6) return;
+    const n = vec3((b.x - c.x) / d, (b.y - c.y) / d, (b.z - c.z) / d);
+    const v = this.ball.v;
+    const vn = v.x * n.x + v.y * n.y + v.z * n.z;
+    if (vn >= 0) return;
+    const k = (1 + FACE_BOUNCE.e) * vn;
+    v.x -= k * n.x;
+    v.y -= k * n.y;
+    v.z -= k * n.z;
+    const w = this.ball.w;
+    w.x *= FACE_BOUNCE.spin;
+    w.y *= FACE_BOUNCE.spin;
+    w.z *= FACE_BOUNCE.spin;
+    const r = rad + BALL.radius;
+    b.x = c.x + n.x * r;
+    b.y = c.y + n.y * r;
+    b.z = c.z + n.z * r;
+    this.events.push({ type: 'bodyHit', t: this.t, side, part, p: { ...b } });
+    this.handleReferee({ type: 'point', winner: this.inFlight.hitter, reason: part });
+  }
+
   private handleReferee(out: RefereeOutput): RefereeOutput {
     if (out.type === 'point') {
       // 人还挂着的挥早 / 未落台（判定比挥拍晚一点）：这一分结束前算数；未落台击球就是这一分的失分原因
@@ -631,7 +692,11 @@ export class MatchSim implements BrainHost {
       this.stats.reasons[reason] = (this.stats.reasons[reason] ?? 0) + 1;
       this.stats.pointDurations.push(this.t - this.pointStartT);
       this.stats.rallyLengths.push(this.rallyHits);
-      for (const side of SIDES) this.controller(side)?.cancel();
+      for (const side of SIDES) {
+        this.controller(side)?.cancel();
+        // 球过去了 / 打到身上了：不用再缩着
+        this.players[side].cowering = false;
+      }
       this.events.push({
         type: 'point',
         t: this.t,

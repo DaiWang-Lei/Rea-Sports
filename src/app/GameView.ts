@@ -60,6 +60,8 @@ export class GameView {
   private kickDir = { x: 0, y: 0 };
   private trail: TrailStyle = 'normal';
   private crowdOn = false;
+  /** 最后一分是不是球打到人（一局结束时输的一方照样捂脸） */
+  private lastPointHit = false;
 
   constructor(
     container: HTMLElement,
@@ -204,11 +206,15 @@ export class GameView {
 
   /**
    * 观众跟着回合走（模仿 WSR 长回合时「全场屏息」的感觉，层层推进而不是一下子安静）：
-   * 平时轻声低语；第 8 拍起越来越激动（第 8、14 拍各「哦——」一声）；第 20 拍起两三秒里慢慢静下来，
-   * 击球声的回声慢慢浮现；得分时欢呼（见 point 事件）
+   * 平时轻声低语；第 8 拍「哦——」一声，之后越来越激动，每一拍齐喊一声「嘿！」、举着手的人跟着跳；
+   * 第 20 拍起喊声停下，两三秒里慢慢静下来，击球声的回声慢慢浮现；得分时欢呼（见 point 事件）
    */
   private crowdFollow(n: number): void {
-    if (n === 8 || n === 14) this.sfx.crowd('ooh');
+    if (n === 8) this.sfx.crowd('ooh');
+    else if (n > 8 && n < 20) {
+      this.sfx.crowd('chant', (n - 8) / 11);
+      this.renderer.crowd.chant();
+    }
     if (n < 8) {
       this.sfx.setCrowd(CROWD.calm, 0, 0.8);
       this.renderer.crowd.mood(0);
@@ -278,14 +284,21 @@ export class GameView {
       case 'floor':
         this.sfx.floor(e.impact, pan(e.p));
         break;
+      case 'bodyHit':
+        // 球打到人：一声闷响，全场「哦——」（得分的欢呼见 point）
+        this.sfx.bonk(pan(e.p));
+        this.sfx.crowd('ooh');
+        break;
       case 'point': {
         // 得分：回声收掉、全场欢呼，再慢慢回到平时的低语
+        const hit = e.reason === 'face' || e.reason === 'body';
+        this.lastPointHit = hit;
         this.sfx.setEcho(0);
         this.sfx.crowd('cheer', e.rallyHits >= 8 ? 1 : 0.6);
         this.sfx.setCrowd(CROWD.calm, 0, 1.5);
         this.renderer.crowd.mood(0);
         this.renderer.crowd.cheer(e.rallyHits >= 8 ? 1 : 0.4);
-        this.renderer.pointReaction(e.winner);
+        this.renderer.pointReaction(e.winner, false, hit);
         const who = e.winner === 'near' ? this.names.near : this.names.far;
         // 和电脑打：你得分绿、电脑得分红；两个人打：谁得分都是绿
         const versus = !!(this.sim.humans.near && this.sim.humans.far);
@@ -311,7 +324,7 @@ export class GameView {
         this.hud.flash(text, `${e.score.near} : ${e.score.far}`, 0, 'big');
         this.sfx.crowd('cheer', 1);
         this.renderer.crowd.cheer(1);
-        if (e.result !== 'draw') this.renderer.pointReaction(e.result, true);
+        if (e.result !== 'draw') this.renderer.pointReaction(e.result, true, this.lastPointHit);
         break;
       }
       default:

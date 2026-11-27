@@ -41,7 +41,7 @@ export interface BrainHost {
 export class CpuBrain {
   readonly lv: CpuLevel;
   private plan: ContactPlan | null = null;
-  private incoming = { popup: false, smash: false };
+  private incoming = { popup: false, smash: false, beaten: false, frozen: false };
   private reactAt = Infinity;
   private swingAt = NaN;
   private intent: ShotIntent | null = null;
@@ -65,7 +65,13 @@ export class CpuBrain {
   /** 球正朝我飞来（对方击球后；或发球已在对方半台落台），规划接球。重复调用 = 重新规划（如擦网后） */
   onIncoming(host: BrainHost, popup: boolean, smash: boolean): void {
     const plan = planContact(host.ball, host.t, this.side, popup, host.tune, smash);
-    this.incoming = { popup, smash };
+    // 扣杀接不接得住、接不住时愣不愣住，一看到球飞来就定了（重新规划时不变）。
+    // 愣住的人不往球边上挪，球可能打到他（等级越低越容易愣住）
+    const again = this.incoming.smash && this.plan !== null;
+    const beaten = smash && (again ? this.incoming.beaten : !this.rng.chance(this.lv.smashReturnP));
+    const frozen = beaten && (again ? this.incoming.frozen : this.rng.chance(this.lv.flinchP));
+    this.incoming = { popup, smash, beaten, frozen };
+    host.player(this.side).cowering = frozen;
     const replanning = this.plan !== null;
     if (!plan.ok) {
       this.plan = null;
@@ -145,7 +151,9 @@ export class CpuBrain {
         me.stance,
         host.tune
       );
-      me.mover.setTarget(body.x, body.y);
+      // 接不住的扣杀、愣住了：站在原地不动
+      if (this.incoming.frozen) me.mover.setTarget(me.mover.x, me.mover.y);
+      else me.mover.setTarget(body.x, body.y);
     }
 
     if (!this.intent && (t >= plan.bounceT || t >= plan.t - 0.45)) {
@@ -216,6 +224,7 @@ export class CpuBrain {
       contact: plan,
       popup: this.incoming.popup,
       smash: this.incoming.smash,
+      smashBeaten: this.incoming.beaten,
       oppX: host.player(otherSide(this.side)).mover.x,
       rallyHits: host.rallyHits,
     };

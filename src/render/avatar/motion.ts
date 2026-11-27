@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import type { Vec3 } from '@/core/vec3';
 import { GRIP_TO_CENTER, type PaddlePose, READY_PADDLE } from '../paddlePose';
+import { COWER_DROP } from '@/sim/players/PlayerSim';
 import { type AvatarPose, POSE_ANKLE_Z } from './types';
 
 /** 动作幅度：上身最多扭转、前倾、侧倾多少（弧度），最多下蹲多少（米） */
@@ -68,7 +69,8 @@ interface Foot {
   step: { from: Vec3; to: Vec3; t0: number; dur: number } | null;
 }
 
-export type AvatarReaction = 'win' | 'lose';
+/** 得分挥拳跳起；失分低头；ouch = 被球打到脸上 / 身上，头往后一仰、手捂脸 */
+export type AvatarReaction = 'win' | 'lose' | 'ouch';
 
 export class AvatarMotion {
   private last: { x: number; y: number } | null = null;
@@ -90,6 +92,8 @@ export class AvatarMotion {
   ];
   /** 正在做的得失分反应 */
   private reaction: { kind: AvatarReaction; t0: number; dur: number } | null = null;
+  /** 缩头弯腰躲扣杀的程度（0..1，平滑） */
+  private cower = 0;
 
   /** 每分结束：得分的挥拳跳起，失分的低头（持续 dur 秒） */
   react(kind: AvatarReaction, dur = 1.6): void {
@@ -104,9 +108,13 @@ export class AvatarMotion {
     paddle: PaddlePose,
     dt: number,
     /** 球的位置（不在场上时 null） */
-    ball: Vec3 | null = null
+    ball: Vec3 | null = null,
+    /** 接不住扣杀、缩头弯腰躲着 */
+    cowering = false
   ): AvatarPose {
     this.clock += dt;
+    this.cower = follow(this.cower, cowering ? 1 : 0, dt, cowering ? 0.06 : 0.25);
+    const cw = this.cower;
     this.move(body, facing, dt);
     const sd: 1 | -1 = facing * shoulderSide > 0 ? 1 : -1;
     this.posture(body, facing, sd, paddle, dt);
@@ -118,6 +126,7 @@ export class AvatarMotion {
     const kind = this.reaction?.kind;
     const win = kind === 'win' ? r : 0;
     const lose = kind === 'lose' ? r : 0;
+    const ouch = kind === 'ouch' ? r : 0;
     // 得分时跳两下
     const tr = this.reaction ? this.clock - this.reaction.t0 : 0;
     const jump = win * 0.12 * Math.max(0, Math.sin(tr * Math.PI * 2 * 2.2));
@@ -136,7 +145,7 @@ export class AvatarMotion {
 
     const feet = this.stepFeet(body, facing, sd, jump);
     const kneePoles = [-1, 1].map((sx) => unit(facing * sx * 0.25, facing, 0)) as [Vec3, Vec3];
-    const crouch = st.crouch + 0.05 * lose;
+    const crouch = st.crouch + 0.05 * lose + COWER_DROP * cw;
     this.lookAt(body, facing, crouch, ball, dt);
 
     // 另一只手（在胸的局部坐标里）：平时握拳放在腹前（上臂垂在身侧略向前、前臂往前往里收）；得分举拳，失分垂下
@@ -153,6 +162,15 @@ export class AvatarMotion {
       fore = blendDir(fore, unit(out * 0.05, 0.15, -1), lose);
       reach += (0.95 - reach) * lose;
     }
+    // 缩头躲球：手挡在脸前；被打中：手捂脸
+    const guard = Math.max(cw, ouch);
+    if (guard > 0) {
+      upper = blendDir(upper, unit(out * 0.05, 0.8, 0.3), guard);
+      fore = blendDir(fore, unit(-out * 0.8, 0.2, 0.6), guard);
+      reach += (0.55 - reach) * guard;
+    }
+    // 被打中：头往后一仰、晃两下
+    const wobble = ouch * 0.15 * Math.sin(tr * Math.PI * 2 * 3);
 
     return {
       root: { x: body.x, y: body.y, z: 0 },
@@ -166,13 +184,14 @@ export class AvatarMotion {
         yaw: 0.4 * st.twist,
       },
       spine: {
-        pitch: st.lean - 0.25 * win + 0.35 * lose,
-        roll: st.roll,
-        yaw: 0.6 * st.twist,
+        pitch: st.lean - 0.25 * win + 0.35 * lose + 0.5 * cw - 0.3 * ouch,
+        roll: st.roll + wobble,
+        yaw: 0.6 * st.twist * (1 - cw),
       },
       head: {
-        yaw: this.look.yaw * (1 - r),
-        pitch: this.look.pitch * (1 - r) - 0.3 * win + 0.5 * lose,
+        yaw: this.look.yaw * (1 - r) * (1 - cw),
+        pitch:
+          this.look.pitch * (1 - r) * (1 - cw) - 0.3 * win + 0.5 * lose + 0.45 * cw - 0.6 * ouch,
       },
       paddle: {
         pos: { ...paddle.pos },

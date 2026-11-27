@@ -32,7 +32,12 @@ export interface PlayerSim {
   /** 抛球动画 */
   tossAt: number;
   isCpu: boolean;
+  /** 接不住扣杀、缩头弯腰躲着（站在原地不动） */
+  cowering: boolean;
 }
+
+/** 缩头弯腰躲扣杀时整个人矮多少（米）：仿真里算球打不打得到人、画面上的姿势都用它 */
+export const COWER_DROP = 0.25;
 
 /** 某一侧球员的「右手方向」在世界 x 上的符号：近端面向 +y，右手是 +x；远端相反 */
 export function rightSign(side: Side): 1 | -1 {
@@ -82,6 +87,7 @@ export function createPlayer(
     swing: null,
     tossAt: -Infinity,
     isCpu,
+    cowering: false,
   };
 }
 

@@ -39,6 +39,8 @@ export class Crowd {
   private hushed = false;
   private cheerT0 = -Infinity;
   private cheerStrength = 0;
+  /** 上一声齐喊的时刻：举着手的人跟着一跳 */
+  private chantT0 = -Infinity;
   private lastT = 0;
   private readonly m = new THREE.Matrix4();
   private readonly q = new THREE.Quaternion();
@@ -81,6 +83,11 @@ export class Crowd {
     this.hushed = hush;
   }
 
+  /** 跟着这一拍齐喊：举着手的人一起跳一下 */
+  chant(): void {
+    this.chantT0 = this.lastT;
+  }
+
   /** 得分欢呼：strength 越大跳起来的人越多 */
   cheer(strength: number): void {
     this.cheerT0 = this.lastT;
@@ -99,7 +106,14 @@ export class Crowd {
       // 欢呼时跳；越到后面跳得越低
       if (pointCheer)
         z += 0.12 * (1 - ct / CHEER_DUR) * Math.abs(Math.sin(ct * Math.PI * 2.2 + s.phase));
-      else if (armsUp) z += 0.03 * Math.abs(Math.sin(t * Math.PI * 2 * 1.4 + s.phase));
+      else if (armsUp) {
+        // 跟着齐喊一跳（每人起跳早晚差一点），喊声间隙里轻轻晃
+        const since = t - this.chantT0 - 0.04 * s.fan;
+        z +=
+          since >= 0 && since < 0.35
+            ? 0.06 * Math.sin((Math.PI * since) / 0.35)
+            : 0.02 * Math.abs(Math.sin(t * Math.PI * 2 * 1.4 + s.phase));
+      }
       this.q.setFromAxisAngle(this.zAxis, s.facing);
       this.m.compose(this.p.set(s.x, s.y, z), this.q, this.s.setScalar(SCALE));
       const g = this.meshes[s.kit];

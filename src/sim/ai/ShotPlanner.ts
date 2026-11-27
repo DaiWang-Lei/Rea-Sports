@@ -34,6 +34,8 @@ export interface IncomingInfo {
   contact: ContactPlan;
   popup: boolean;
   smash: boolean;
+  /** 这一板扣杀接不住：一看到球飞来就定了，接不住的人愣在原地（不往球边上挪，球可能打到脸上） */
+  smashBeaten: boolean;
   oppX: number;
   /** 本回合已击球次数 */
   rallyHits: number;
@@ -193,6 +195,9 @@ export interface HitContext {
   ballHeight: number;
 }
 
+/** 扣杀时追身（瞄着对手站的位置打）的概率 */
+const BODY_SMASH_P = 0.3;
+
 export type WhiffReason = 'reach' | 'smash' | 'timing' | 'early' | 'notReady';
 
 export type HitDecision =
@@ -204,7 +209,7 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
   const m = tune.mover;
   const dir = sideDir(info.side);
   if (reachError > m.reachRushed) return { type: 'whiff', reason: 'reach' };
-  if (info.smash && !rng.chance(lv.smashReturnP)) return { type: 'whiff', reason: 'smash' };
+  if (info.smash && info.smashBeaten) return { type: 'whiff', reason: 'smash' };
 
   const threat = incomingThreat(info.contact, info.smash, pace);
   const pRush = clamp(1.5 * (threat - lv.composure), 0, 0.6);
@@ -237,15 +242,16 @@ export function finalizeHit(ctx: HitContext, lv: CpuLevel, rng: Rng, tune: Tunin
   }
 
   if (info.popup && ctx.ballHeight >= 0.3 && rng.chance(lv.smashP)) {
+    // 追身扣杀（打对手站的位置，躲都来不及）或按原来想打的落点
+    const x = rng.chance(BODY_SMASH_P)
+      ? clamp(info.oppX + rng.normal(0, 0.08), -0.6, 0.6)
+      : clamp(intent.target.x + dxWorld, -1, 1);
     return {
       type: 'hit',
       rushed: false,
       spec: {
         kind: 'smash',
-        target: {
-          x: clamp(intent.target.x + dxWorld, -1, 1),
-          y: dir * rng.uniform(0.75, 1.15),
-        },
+        target: { x, y: dir * rng.uniform(0.75, 1.15) },
         speedH: (BASE_SPEED.smash + rng.uniform(0, 2)) * pace,
         topspin: 80,
         sidespin: 0,

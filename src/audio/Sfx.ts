@@ -5,12 +5,14 @@
  *    随机挑一下（不连着重复同一下），音高随机偏 ±3%，力度控制音量；
  *  - 球网：落台的录音放慢、滤掉高频，闷一点；
  *  - 观众：两层循环的人声（平时的低语、激动的欢呼），由 setCrowd 调两层的音量，只在打球时放（setCrowdOn）；
- *    低语滤掉高频，听着远一点、不像底噪。外加得分欢呼、长回合得分的大欢呼、回合打长了的一声「哦——」。
+ *    低语滤掉高频，听着远一点、不像底噪。外加得分欢呼、长回合得分的大欢呼、回合打长了的一声「哦——」、
+ *    回合打热了以后每一拍的一声齐喊「嘿！」。
  *    所有观众声走同一路总音量（setCrowdLevel，玩家设置的大 / 小 / 关）。
  * 浏览器要求用户点击后才能出声：第一次交互时调用 unlock()。素材在创建时就开始下载，解锁后解码。
  */
 import { clamp } from '@/core/math';
 import cheerBigUrl from './samples/cheer-big.mp3?url';
+import chantUrl from './samples/chant.mp3?url';
 import cheerUrl from './samples/cheer.mp3?url';
 import excitedUrl from './samples/crowd-excited.mp3?url';
 import murmurUrl from './samples/crowd-murmur.mp3?url';
@@ -29,6 +31,7 @@ const FILES = {
   cheer: cheerUrl,
   cheerBig: cheerBigUrl,
   ooh: oohUrl,
+  chant: chantUrl,
   murmur: murmurUrl,
   excited: excitedUrl,
 };
@@ -176,12 +179,32 @@ export class Sfx {
     this.play('floor', 0.7 * clamp(impact / 4, 0.1, 1), 1, this.panner(pan));
   }
 
-  /** 观众：得分欢呼（amount ≥ 1 是长回合 / 赢下比赛的大欢呼），或回合打长了的一声「哦——」 */
-  crowd(kind: 'cheer' | 'ooh', amount = 1): void {
+  /**
+   * 观众：得分欢呼（amount ≥ 1 是长回合 / 赢下比赛的大欢呼）、回合打长了的一声「哦——」、
+   * 跟着每一拍的一声齐喊（amount = 0..1 越来越响，音高每次随机偏一点）
+   */
+  crowd(kind: 'cheer' | 'ooh' | 'chant', amount = 1): void {
     if (!this.ready) return;
-    if (kind === 'ooh') this.play('ooh', 0.4, 1, this.crowdBus!);
+    if (kind === 'chant')
+      this.play(
+        'chant',
+        0.15 + 0.3 * clamp(amount, 0, 1),
+        1 + (Math.random() - 0.5) * 0.1,
+        this.crowdBus!
+      );
+    else if (kind === 'ooh') this.play('ooh', 0.4, 1, this.crowdBus!);
     else if (amount >= 1) this.play('cheerBig', 0.45, 1, this.crowdBus!);
     else this.play('cheer', 0.4 * amount + 0.1, 1, this.crowdBus!);
+  }
+
+  /** 球打到人身上 / 脸上：击球声放慢、闷一点 */
+  bonk(pan: number): void {
+    if (!this.ready) return;
+    const lp = this.ctx!.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 900;
+    lp.connect(this.panner(pan));
+    this.play('paddle', 0.9, 0.55, lp);
   }
 
   /** 提示音（菜单、计时） */
