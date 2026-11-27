@@ -147,8 +147,8 @@ export function chooseIntent(info: IncomingInfo, lv: CpuLevel, rng: Rng): ShotIn
   } else {
     const w = [
       Math.max(0.1, 1 - lv.spinUse - lv.curveUse), // normal
-      lv.spinUse * 0.6, // drive
-      lv.spinUse * 0.4, // cut
+      lv.spinUse * lv.driveShare, // drive
+      lv.spinUse * (1 - lv.driveShare), // cut
       lv.curveUse, // curve
     ];
     kind = (['normal', 'drive', 'cut', 'curve'] as const)[rng.pickWeighted(w)];

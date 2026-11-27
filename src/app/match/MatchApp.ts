@@ -1,12 +1,23 @@
 /**
  * 和电脑对打：连接设备 → 校准（拍头指向电视，和练习共用）→ 选对手和分制 → 比赛 → 结算。
+ * 对手默认按你的熟练度配对（每个对手有自己的名字、样子、水平和打法，见 config/opponents.ts），
+ * 也可以自己挑；只有配对的那一局计熟练度。
  * 比分按 WSR 只在两分之间显示。轮到你发球时按 A（手机「确认」、键盘空格）或向上抖手柄抛球，球落下时挥拍。
  * 暂停（Joy-Con + / 手机「暂停」/ Esc）或手柄断开时，正在进行的这一分作废，继续后重打。
  * 选对手、暂停、结算时可以换成 2 人（双人分屏，见 PlayHost），手柄不用重连。
  */
 import '../practice/practice.css';
 import './match.css';
-import { CPU_LEVELS, cpuLevel } from '@/config/difficulty';
+import { cpuLevel, STYLE_TEXT } from '@/config/difficulty';
+import {
+  crowdFill,
+  matchOpponent,
+  type Opponent,
+  OPPONENTS,
+  rateGame,
+  SKILL,
+} from '@/config/opponents';
+import { createLookBody } from '@/render/avatar/roster';
 import { tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
 import type { SwingCommit } from '@/input/paddle/SwingDetector';
@@ -33,10 +44,9 @@ import { median, serveText, strokeText, timingText, WHIFF_TEXT } from '../shared
 import { deviceLine, deviceSwingInput, HumanPaddle, keySwingInput } from '../shared/motionPlay';
 import { deviceWords, SetupFlow } from '../shared/SetupFlow';
 import { playersRow } from '../shared/players';
+import { loadSkill, saveSkill } from './skill';
 
 interface Settings {
-  /** 电脑等级 1..5 */
-  level: number;
   points: 6 | 11;
   leniency: number;
   /** 击球后小字提示时机 */
@@ -48,11 +58,10 @@ const SETTINGS_KEY = 'rea-match';
 const RECORD_MAX_MS = 10 * 60 * 1000;
 
 function loadSettings(): Settings {
-  const def: Settings = { level: 1, points: 6, leniency: 0.6, timingHint: true };
+  const def: Settings = { points: 6, leniency: 0.6, timingHint: true };
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
     return {
-      level: clamp(Math.round(s?.level ?? def.level), 1, CPU_LEVELS.length),
       points: s?.points === 11 ? 11 : 6,
       leniency: s?.leniency ?? def.leniency,
       timingHint: s?.timingHint ?? def.timingHint,
@@ -72,14 +81,6 @@ function saveSettings(s: Settings): void {
 
 /** setup = 连接 / 校准中；choose = 选对手；play = 比赛中（含暂停）；over = 结算 */
 type Step = 'setup' | 'choose' | 'play' | 'over';
-
-const LEVEL_BLURB = [
-  '反应慢、失误多，适合先熟悉手感',
-  '回球稳一些，偶尔加旋转',
-  '会用旋转和落点调动你',
-  '速度快、旋转多，会扣杀',
-  '反应快、落点刁、扣杀狠',
-];
 
 /** 这一局的统计（结算页） */
 interface GameLog {
@@ -111,6 +112,11 @@ export class MatchApp {
   /** device = 手柄断开（或没有数据）时自动暂停 */
   private pauseReason: 'user' | 'device' = 'user';
   private game: GameLog = newGameLog();
+  /** 你的熟练度；按熟练度配对的对手、自己挑的对手（null = 用配对的）；这一局打完熟练度怎么变的 */
+  private skill = loadSkill();
+  private matched: Opponent = matchOpponent(this.skill.rating, Math.random());
+  private picked: Opponent | null = null;
+  private rating: { before: number; after: number } | null = null;
   private keyId = 1_000_000;
   private readonly keysDown = new Set<string>();
 
@@ -279,15 +285,36 @@ export class MatchApp {
   }
 
   private names() {
-    return { near: '你', far: `电脑·${cpuLevel(this.settings.level).name}` };
+    return { near: '你', far: this.opponent.name };
+  }
+
+  /** 这一局的对手：自己挑的，或按熟练度配对的 */
+  private get opponent(): Opponent {
+    return this.picked ?? this.matched;
+  }
+
+  /** 这一局计不计熟练度：按熟练度配对的才计（自己挑的正好是配对的那个也算） */
+  private get ranked(): boolean {
+    return this.picked === null || this.picked === this.matched;
+  }
+
+  /** 换对手：画面上远端的人也换成他的样子 */
+  private pick(o: Opponent | null): void {
+    this.picked = o;
+    const look = this.opponent.look;
+    this.view.renderer.setAvatar('far', (t) => createLookBody(look, t));
+    this.view.setNames(this.names());
+    if (this.step === 'choose') this.renderChoose();
   }
 
   private makeSim(): MatchSim {
     const s = this.settings;
+    const o = this.opponent;
     return new MatchSim({
       seed: Math.floor(Math.random() * 1e9),
       points: s.points,
-      cpu: { far: s.level },
+      cpu: { far: o.level },
+      cpuStyle: { far: o.style },
       handed: { near: this.input?.handed ?? 1 },
       leniency: s.leniency,
       tune: tuning,
@@ -408,8 +435,8 @@ export class MatchApp {
     const step = this.step;
     if (step === 'choose') {
       if (k === 'arrowleft' || k === 'arrowright') {
-        const lv = this.settings.level + (k === 'arrowleft' ? -1 : 1);
-        this.setSetting('level', clamp(lv, 1, CPU_LEVELS.length));
+        const i = OPPONENTS.indexOf(this.opponent) + (k === 'arrowleft' ? -1 : 1);
+        this.pick(OPPONENTS[clamp(i, 0, OPPONENTS.length - 1)]);
       } else if (k === 'arrowup' || k === 'arrowdown') {
         this.setSetting('points', this.settings.points === 6 ? 11 : 6);
       } else if (k === 'enter' || k === ' ') {
@@ -516,10 +543,17 @@ export class MatchApp {
     this.stage = 'choose';
     this.paused = false;
     this.pauseEl.hidden = true;
-    this.renderChoose();
+    // 每次回到选对手都按现在的熟练度重新配对（自己挑的保留）
+    this.matched = matchOpponent(this.skill.rating, Math.random());
+    this.pick(this.picked);
   }
 
   private startGame(): void {
+    // 按熟练度配对的：按现在的熟练度重新配一个（上一局可能刚涨了分）
+    if (this.picked === null && this.stage !== 'choose') {
+      this.matched = matchOpponent(this.skill.rating, Math.random());
+      this.pick(null);
+    }
     this.sim = this.makeSim();
     this.view.setSim(this.sim);
     this.view.setNames(this.names());
@@ -530,7 +564,14 @@ export class MatchApp {
     this.panelEl.hidden = true;
     this.pauseEl.hidden = true;
     const s = this.settings;
-    this.view.hud.flash(`对手：${cpuLevel(s.level).name}`, `${s.points} 分制 · 你先发球`, 1.6);
+    const o = this.opponent;
+    this.rating = null;
+    this.view.renderer.crowd.setFill(crowdFill(this.skill.rating));
+    this.view.hud.flash(
+      `对手：${o.name}`,
+      `${cpuLevel(o.level).name} · ${STYLE_TEXT[o.style].name} · ${s.points} 分制 · 你先发球`,
+      1.6
+    );
     this.rec?.push({ k: 'settings', rt: performance.now(), settings: this.settingsLog() });
     this.lastPlan = null;
   }
@@ -538,8 +579,29 @@ export class MatchApp {
   private showResults(): void {
     this.stage = 'over';
     this.resultsAt = NaN;
+    this.rateGame();
     if (this.rec) this.stopRecording(true);
     this.renderResults();
+  }
+
+  /** 一局打完：配对的对手才计熟练度 */
+  private rateGame(): void {
+    const result = this.sim.result;
+    if (!this.ranked || !result) return;
+    const { near, far } = this.sim.scoring.score;
+    const s = this.skill;
+    const before = s.rating;
+    s.rating = rateGame(
+      before,
+      this.opponent,
+      result === 'near' ? 1 : result === 'draw' ? 0.5 : 0,
+      { mine: near, theirs: far },
+      this.settings.points
+    );
+    s.games++;
+    if (result === 'near') s.wins++;
+    saveSkill(s);
+    this.rating = { before, after: s.rating };
   }
 
   private togglePause(): void {
@@ -645,7 +707,7 @@ export class MatchApp {
     const recText = rec
       ? `<br/><span class="pr-rec">● 录制中 · 已录 ${rec.results} 分 · ${Math.floor(rec.elapsedMs / 60000)}:${String(Math.floor(rec.elapsedMs / 1000) % 60).padStart(2, '0')}</span>`
       : '';
-    this.statusEl.innerHTML = `${dev}<br/><span class="dim">对手：${cpuLevel(s.level).name} · ${s.points} 分制 · 暂停：手机「暂停」/ Joy-Con + / Esc · 回中（指向电视按）：Joy-Con X + ZR 或 Y / 手机「回中」 · 画面延迟补偿 ${latencyMs()}ms</span>${recText}`;
+    this.statusEl.innerHTML = `${dev}<br/><span class="dim">对手：${this.opponent.name} · ${s.points} 分制 · 暂停：手机「暂停」/ Joy-Con + / Esc · 回中（指向电视按）：Joy-Con X + ZR 或 Y / 手机「回中」 · 画面延迟补偿 ${latencyMs()}ms</span>${recText}`;
   }
 
   private opt<T extends string | number | boolean>(
@@ -679,7 +741,7 @@ export class MatchApp {
           this.setSetting('timingHint', raw === 'true');
         } else if (name === 'points') {
           this.setSetting('points', raw === '11' ? 11 : 6);
-        } else if (name === 'level' || name === 'leniency') {
+        } else if (name === 'leniency') {
           this.setSetting(name, Number(raw));
         }
       })
@@ -690,22 +752,40 @@ export class MatchApp {
     const p = this.panelEl;
     p.hidden = false;
     const s = this.settings;
+    const o = this.opponent;
+    const r = this.skill.rating;
+    const st = STYLE_TEXT[o.style];
     p.innerHTML = `
       <div class="pr-panel">
         <h2>和电脑对打</h2>
         ${playersRow(1)}
-        <div class="pr-setting"><span>对手</span>${CPU_LEVELS.map((l, i) => this.opt('level', i + 1, s.level, l.name)).join('')}</div>
-        <p class="dim small mt-blurb">${LEVEL_BLURB[s.level - 1] ?? ''}</p>
+        <div class="mt-skill">你的熟练度 <b>${r}</b>${r >= SKILL.pro ? '<span class="mt-pro">Pro</span>' : ''}</div>
+        <div class="mt-opp">
+          <div class="mt-opp-name">${o.name}${o.champion ? '<span class="mt-champ">冠军</span>' : ''}</div>
+          <div>${cpuLevel(o.level).name} · ${st.name} · 熟练度 ${o.skill}</div>
+          <p class="dim small">${st.blurb}</p>
+          <p class="small ${this.ranked ? 'ok' : 'warn'}">${this.ranked ? '按你的熟练度配对' : '自己挑的对手，这一局不计熟练度'}</p>
+        </div>
+        <div class="pr-setting mt-opps"><span>换对手</span>${OPPONENTS.map(
+          (x) =>
+            `<button class="${x === o ? 'on' : ''}${x === this.matched ? ' matched' : ''}" data-opp="${x.id}">${x.name}</button>`
+        ).join('')}</div>
         <div class="pr-setting"><span>分制</span>${this.opt('points', 6, s.points, '6 分')}${this.opt('points', 11, s.points, '11 分（球更快）')}</div>
         <div class="pr-actions">
           <button class="primary" data-act="start">开始（A）</button>
           <a href="./"><button>返回首页</button></a>
         </div>
         <p class="dim">发球：${this.tossHelp()}。每人连发 2 球，先到 ${s.points} 分并领先 2 分获胜，20 平算平局。</p>
-        <p class="dim small">换对手：用鼠标点，或键盘 ← →（↑ ↓ 换分制）；开始：Joy-Con A / 手机「确认」/ Enter；换成 2 人：Joy-Con X（L 按 ←）</p>
+        <p class="dim small">换对手：用鼠标点，或键盘 ← →（↑ ↓ 换分制），虚线框的是配对的对手；开始：Joy-Con A / 手机「确认」/ Enter；换成 2 人：Joy-Con X（L 按 ←）</p>
       </div>`;
     this.bindSettings(p);
     this.bindPlayers(p);
+    p.querySelectorAll<HTMLButtonElement>('[data-opp]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const x = OPPONENTS.find((y) => y.id === b.dataset.opp) ?? null;
+        this.pick(x === this.matched ? null : x);
+      })
+    );
     p.querySelector('[data-act="start"]')?.addEventListener('click', () => this.startGame());
   }
 
@@ -716,7 +796,16 @@ export class MatchApp {
     const g = this.game;
     const { near, far } = sim.scoring.score;
     const result = sim.result;
-    const title = result === 'draw' ? '平局' : result === 'near' ? '你赢了！' : '电脑赢了';
+    const title =
+      result === 'draw' ? '平局' : result === 'near' ? '你赢了！' : `${this.opponent.name}赢了`;
+    const rt = this.rating;
+    const ratingRow = rt
+      ? `<div class="pr-row"><span>熟练度</span><b>${rt.before} → ${rt.after}（${rt.after >= rt.before ? '+' : ''}${rt.after - rt.before}）${
+          rt.before < SKILL.pro && rt.after >= SKILL.pro
+            ? ' · <span class="mt-pro">成为 Pro!</span>'
+            : ''
+        }</b></div>`
+      : '<div class="pr-row"><span>熟练度</span><b class="dim">自己挑的对手，不计</b></div>';
     const rallies = g.points.map((x) => x.rallyHits);
     const longest = rallies.length ? Math.max(...rallies) : 0;
     const avg = rallies.length ? rallies.reduce((a, b) => a + b, 0) / rallies.length : 0;
@@ -736,7 +825,8 @@ export class MatchApp {
         <div class="mt-final">你 <b>${near}</b> : <b>${far}</b> ${this.names().far}</div>
         <div class="pr-row"><span>回合</span><b>共 ${g.points.length} 分 · 最长 ${longest} 拍 · 平均 ${avg.toFixed(1)} 拍</b></div>
         <div class="pr-row"><span>你的失分</span><b>${reasons('far')}</b></div>
-        <div class="pr-row"><span>电脑的失分</span><b>${reasons('near')}</b></div>
+        <div class="pr-row"><span>${this.opponent.name}的失分</span><b>${reasons('near')}</b></div>
+        ${ratingRow}
         <div class="pr-row"><span>你的击球</span><b>回球 ${g.hits} 拍 · 发球 ${g.serves} 次${whiffs ? ` · 挥空（${whiffs}）` : ''}</b></div>
         ${med === null ? '' : `<div class="pr-row"><span>回球时机</span><b>最近的中位数 ${med === 0 ? '正好' : `${med < 0 ? '早' : '晚'} ${Math.abs(med)}ms`}</b></div>`}
         <div class="pr-actions">
@@ -764,7 +854,7 @@ export class MatchApp {
       <div class="pr-panel">
         <h2>${device ? '手柄断开了' : '暂停'}</h2>
         ${device ? '<p class="pr-big">设备断开或没有数据。重新连上（Joy-Con 按一下任意键；手机重新打开页面）后按继续。</p>' : ''}
-        <p class="dim">对手：${cpuLevel(s.level).name} · ${s.points} 分制 · 比分 你 ${sc.near} : ${sc.far} 电脑 · 正在打的这一分作废，继续后重打</p>
+        <p class="dim">对手：${this.opponent.name} · ${s.points} 分制 · 比分 你 ${sc.near} : ${sc.far} ${this.opponent.name} · 正在打的这一分作废，继续后重打</p>
         <div class="pr-setting"><span>宽容度</span>${[0.2, 0.6, 1].map((v) => this.opt('leniency', v, s.leniency, v < 0.4 ? '严格' : v < 0.8 ? '标准' : '宽松')).join('')}</div>
         <div class="pr-setting"><span>画面延迟补偿<small class="dim">（这块屏幕 ${screenKey()}）</small></span>
           <button data-lat="-10">−10</button><b class="pr-lat">${lat} ms</b><button data-lat="10">+10</button>
@@ -827,7 +917,7 @@ export class MatchApp {
     const s = this.settings;
     const cfg = this.sim.human('near')!.resolver.cfg;
     return {
-      level: s.level,
+      level: this.opponent.level,
       zone: 'match',
       points: s.points,
       leniency: s.leniency,

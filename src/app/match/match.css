@@ -50,3 +50,61 @@
   font-size: 34px;
   padding: 0 4px;
 }
+
+.mt-skill {
+  margin: 4px 0 10px;
+  font-size: 16px;
+}
+
+.mt-skill b {
+  font-size: 22px;
+  padding: 0 4px;
+}
+
+.mt-pro,
+.mt-champ {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #1a1a1a;
+  background: #ffd166;
+  vertical-align: middle;
+}
+
+.mt-opp {
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  background: var(--panel-2, #1d2631);
+  border: 1px solid var(--border, #2a3442);
+  line-height: 1.6;
+}
+
+.mt-opp p {
+  margin: 2px 0 0;
+}
+
+.mt-opp-name {
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.mt-opp .ok {
+  color: #7cf0b0;
+}
+
+.mt-opp .warn {
+  color: #f5c542;
+}
+
+.mt-opps {
+  flex-wrap: wrap;
+}
+
+.mt-opps button.matched {
+  outline: 2px dashed #7cf0b0;
+  outline-offset: 1px;
+}

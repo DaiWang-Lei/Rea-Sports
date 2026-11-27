@@ -3,7 +3,7 @@
  * 发球流程、球的物理、裁判、记分、电脑 AI、走位，以及给渲染/音效/震动用的事件队列。
  * 没有电脑的一方由人操作（HumanPlayer）：抛球、挥拍从外面送进来（humanToss / humanSwing）。
  */
-import { cpuLevel } from '@/config/difficulty';
+import { cpuLevel, type CpuStyle } from '@/config/difficulty';
 import { createTuning, type Tuning } from '@/config/tuning';
 import { Rng } from '@/core/rng';
 import { isFiniteVec, type Vec3, vec3 } from '@/core/vec3';
@@ -38,8 +38,9 @@ export interface MatchOptions {
   drawAt?: number | null;
   firstServer?: Side;
   seed?: number;
-  /** 由电脑控制的一方及其等级（1..5） */
+  /** 由电脑控制的一方及其等级（1..5）、打法 */
   cpu?: Partial<Record<Side, number>>;
+  cpuStyle?: Partial<Record<Side, CpuStyle>>;
   handed?: Partial<Record<Side, 1 | -1>>;
   tune?: Tuning;
   /** 人类玩家的走位参数 */
@@ -197,7 +198,7 @@ export class MatchSim implements BrainHost {
       const limits = isCpu
         ? this.cpuLimits(level)
         : this.paced(opts.humanLimits ?? DEFAULT_HUMAN_LIMITS);
-      if (isCpu) this.brains[side] = new CpuBrain(side, level, this.rng);
+      if (isCpu) this.brains[side] = new CpuBrain(side, level, this.rng, opts.cpuStyle?.[side]);
       else {
         this.humans[side] = new HumanPlayer(side, this.rng, this.tune, this.windowMs, {
           leniency: opts.leniency,

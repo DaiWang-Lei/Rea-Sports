@@ -23,6 +23,8 @@ interface Spectator extends Seat {
   eager: number;
   /** 得分欢呼时多大劲就跳起来 */
   fan: number;
+  /** 看台只坐满一部分时，排在 fill 以内的才来（0..1） */
+  rank: number;
 }
 
 /** 观众画小一点（看台远，看不出大小）：站在看台上头才不会被画面顶边切掉 */
@@ -36,6 +38,7 @@ export class Crowd {
   private readonly people: Spectator[] = [];
   private readonly meshes: Array<{ idle: THREE.InstancedMesh; cheer: THREE.InstancedMesh }>;
   private excited = 0;
+  private fill = 1;
   private hushed = false;
   private cheerT0 = -Infinity;
   private cheerStrength = 0;
@@ -62,6 +65,7 @@ export class Crowd {
         rate: 0.6 + Math.random() * 0.8,
         eager: 0.15 + Math.random() * 0.85,
         fan: Math.random(),
+        rank: Math.random(),
       });
     }
     this.meshes = kit.map((b, i) => {
@@ -75,6 +79,11 @@ export class Crowd {
       return { idle: make(b.idle), cheer: make(b.cheer) };
     });
     this.update(0);
+  }
+
+  /** 看台坐满多少（0..1）：和电脑对打时熟练度越高观众越多 */
+  setFill(fill: number): void {
+    this.fill = fill;
   }
 
   /** 回合里的激动程度（0..1）；hush = 长回合屏息（几乎不动） */
@@ -117,8 +126,9 @@ export class Crowd {
       this.q.setFromAxisAngle(this.zAxis, s.facing);
       this.m.compose(this.p.set(s.x, s.y, z), this.q, this.s.setScalar(SCALE));
       const g = this.meshes[s.kit];
-      g.idle.setMatrixAt(s.slot, armsUp ? HIDDEN : this.m);
-      g.cheer.setMatrixAt(s.slot, armsUp ? this.m : HIDDEN);
+      const here = s.rank <= this.fill;
+      g.idle.setMatrixAt(s.slot, here && !armsUp ? this.m : HIDDEN);
+      g.cheer.setMatrixAt(s.slot, here && armsUp ? this.m : HIDDEN);
     }
     for (const g of this.meshes) {
       g.idle.instanceMatrix.needsUpdate = true;

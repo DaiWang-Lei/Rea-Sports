@@ -1,5 +1,5 @@
 /**
- * 和电脑对打冒烟测试（需要先 pnpm dev，或传线上网址）：用键盘模式打完一整局（对手入门、6 分制）。
+ * 和电脑对打冒烟测试（需要先 pnpm dev，或传线上网址）：用键盘模式打完一整局（对手小豆：入门 · 全面型、6 分制）。
  * 轮到自己发球按空格抛球，球落下时按 F 发球；来球在理想击球时刻附近按 F / J。
  * 中途按一次 Esc 暂停（这一分作废）再继续。检查：能打完一局、出结算页、页面没有报错。
  * 用法：pnpm smoke:match [BASE 网址] [截图路径]
@@ -30,7 +30,7 @@ await page.goto(`${BASE}/?mode=match&debug=1`);
 await sleep(1500);
 await page.getByRole('button', { name: '用键盘试一试' }).click();
 await sleep(300);
-await page.getByRole('button', { name: '入门' }).click();
+await page.getByRole('button', { name: '小豆', exact: true }).click();
 await page.getByRole('button', { name: '6 分', exact: true }).click();
 await page.screenshot({ path: shot.replace(/(\.png)?$/, '-choose.png') });
 await page.getByRole('button', { name: '开始（A）' }).click();

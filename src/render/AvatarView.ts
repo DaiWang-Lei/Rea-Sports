@@ -55,6 +55,11 @@ export class AvatarView {
       .map((c) => c.body!);
   }
 
+  /** 不要这个人了（换人物）：模型从场景里拿掉 */
+  remove(): void {
+    for (const c of Object.values(this.copies)) c.body?.group.removeFromParent();
+  }
+
   set visible(v: boolean) {
     this.present = v;
     for (const b of this.shown) b.group.visible = v;

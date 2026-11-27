@@ -2,7 +2,7 @@
  * 电脑对手：反应延迟 → 带噪声地预测击球点并走位 → 落台时决定回什么球（引拍高度暗示旋转）→
  * 在「理想时刻 + 时机误差」挥拍。发球：高抛，球落回到手上方 serve.sweetAboveHand 时击球。
  */
-import { type CpuLevel, cpuLevel } from '@/config/difficulty';
+import { type CpuLevel, cpuLevel, type CpuStyle, styledLevel } from '@/config/difficulty';
 import type { Tuning } from '@/config/tuning';
 import { clamp } from '@/core/math';
 import type { Rng } from '@/core/rng';
@@ -53,9 +53,10 @@ export class CpuBrain {
   constructor(
     readonly side: Side,
     readonly level: number,
-    private readonly rng: Rng
+    private readonly rng: Rng,
+    style: CpuStyle = 'allround'
   ) {
-    this.lv = cpuLevel(level);
+    this.lv = styledLevel(cpuLevel(level), style);
   }
 
   get contactPlan(): ContactPlan | null {

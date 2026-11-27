@@ -4,6 +4,7 @@
  * 看台上的观众也是这些人物（加上几种随机配色的 Q 版），所以四套衣服都下载。
  * 下载失败（离线等）时那一边退回 Q 版人物，观众也只有 Q 版。
  */
+import type { OpponentLook } from '@/config/opponents';
 import type { Side } from '@/sim/constants';
 import { type BakedAvatar, bakeAvatar } from './bake';
 import type { KenneyAssets, KenneySkin } from './KenneyBody';
@@ -80,6 +81,13 @@ export function createAvatarBody(id: AvatarId, translucent: boolean): AvatarBody
   if (look) return new ProceduralBody(look, translucent);
   if (!kenney) throw new Error(`人物「${id}」的模型还没下载（先 preloadAvatars）`);
   return kenney.create(kenney.assets, id as KenneySkin, translucent);
+}
+
+/** 电脑对手自己的样子（Q 版配色或 Kenney 人物；Kenney 没下载成就用 Q 版） */
+export function createLookBody(look: OpponentLook, translucent: boolean): AvatarBody {
+  if ('q' in look) return new ProceduralBody(look.q, translucent);
+  if (kenney) return kenney.create(kenney.assets, look.kenney, translucent);
+  return new ProceduralBody(LOOKS[DEFAULT_AVATARS.far]!, translucent);
 }
 
 /** 看台上 Q 版观众的随机配色 */

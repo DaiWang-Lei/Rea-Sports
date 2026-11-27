@@ -32,9 +32,10 @@ export interface CpuLevel {
   /** 回球速度倍率范围 */
   speedMin: number;
   speedMax: number;
-  /** 使用旋转 / 侧旋的概率 */
+  /** 使用旋转 / 侧旋的概率；旋转球里拉上旋（其余是削下旋）的比例 */
   spinUse: number;
   curveUse: number;
+  driveShare: number;
   /** 遇到高球扣杀的概率 / 接住对方扣杀的概率 */
   smashP: number;
   smashReturnP: number;
@@ -63,6 +64,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     speedMax: 1.02,
     spinUse: 0.1,
     curveUse: 0,
+    driveShare: 0.6,
     smashP: 0.15,
     smashReturnP: 0.05,
     flinchP: 0.6,
@@ -84,6 +86,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     speedMax: 1.01,
     spinUse: 0.25,
     curveUse: 0.05,
+    driveShare: 0.6,
     smashP: 0.3,
     smashReturnP: 0.15,
     flinchP: 0.45,
@@ -105,6 +108,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     speedMax: 1.02,
     spinUse: 0.4,
     curveUse: 0.1,
+    driveShare: 0.6,
     smashP: 0.5,
     smashReturnP: 0.3,
     flinchP: 0.3,
@@ -126,6 +130,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     speedMax: 1.03,
     spinUse: 0.55,
     curveUse: 0.15,
+    driveShare: 0.6,
     smashP: 0.9,
     smashReturnP: 0.45,
     flinchP: 0.2,
@@ -147,6 +152,7 @@ export const CPU_LEVELS: CpuLevel[] = [
     speedMax: 1.04,
     spinUse: 0.7,
     curveUse: 0.2,
+    driveShare: 0.6,
     smashP: 0.97,
     smashReturnP: 0.6,
     flinchP: 0.1,
@@ -159,4 +165,68 @@ export const CPU_LEVELS: CpuLevel[] = [
 
 export function cpuLevel(level: number): CpuLevel {
   return CPU_LEVELS[Math.max(0, Math.min(CPU_LEVELS.length - 1, Math.round(level) - 1))];
+}
+
+/**
+ * 电脑的打法（像 WSR 里每个对手各有风格，比如专门的削球手）：在等级参数上修正，等级定水平、风格定打法。
+ *  - allround 全面型：按等级不变
+ *  - attack 进攻型：多拉上旋、多扣杀，球快，落点贴边；防守差一点
+ *  - chop 削球型：大多回下旋（一直拉对他没用），球慢但稳，接扣杀好，很少扣杀
+ *  - steady 稳健型：少用旋转，落点稳、少失误，不冒险
+ *  - trick 旋转型：多侧旋、多假动作
+ */
+export type CpuStyle = 'allround' | 'attack' | 'chop' | 'steady' | 'trick';
+
+export const STYLE_TEXT: Record<CpuStyle, { name: string; blurb: string }> = {
+  allround: { name: '全面型', blurb: '什么球都会一点，没有明显的短板' },
+  attack: { name: '进攻型', blurb: '爱拉上旋、爱扣杀，球快、落点贴边；防守差一点' },
+  chop: { name: '削球型', blurb: '大多回下旋，一直拉对他没用；扣杀他也常能接回来' },
+  steady: { name: '稳健型', blurb: '很少旋转，落点稳、失误少，要靠你主动拉开' },
+  trick: { name: '旋转型', blurb: '侧旋多、假动作多，球会突然拐弯' },
+};
+
+const clamp01 = (v: number, max = 1) => Math.max(0, Math.min(max, v));
+
+/** 带风格的电脑参数 */
+export function styledLevel(base: CpuLevel, style: CpuStyle = 'allround'): CpuLevel {
+  const lv = { ...base };
+  switch (style) {
+    case 'attack':
+      lv.spinUse = clamp01(lv.spinUse + 0.25, 0.85);
+      lv.driveShare = 0.85;
+      lv.smashP = clamp01(lv.smashP * 1.6, 0.97);
+      lv.speedMin += 0.05;
+      lv.speedMax += 0.08;
+      lv.aimMargin = Math.max(0.06, lv.aimMargin - 0.05);
+      lv.smashReturnP *= 0.8;
+      lv.composure -= 0.03;
+      break;
+    case 'chop':
+      lv.spinUse = clamp01(lv.spinUse + 0.35, 0.85);
+      lv.driveShare = 0.1;
+      lv.speedMin -= 0.08;
+      lv.speedMax -= 0.08;
+      lv.landingSigma *= 0.85;
+      lv.clearanceSigma *= 0.8;
+      lv.smashP *= 0.4;
+      lv.smashReturnP = clamp01(lv.smashReturnP * 1.4 + 0.1, 0.85);
+      lv.composure += 0.03;
+      break;
+    case 'steady':
+      lv.spinUse *= 0.6;
+      lv.curveUse *= 0.5;
+      lv.landingSigma *= 0.75;
+      lv.clearanceSigma *= 0.7;
+      lv.aimMargin += 0.05;
+      lv.speedMax -= 0.04;
+      lv.smashP *= 0.8;
+      break;
+    case 'trick':
+      lv.curveUse = clamp01(lv.curveUse + 0.2, 0.4);
+      lv.feintP = clamp01(lv.feintP + 0.15);
+      break;
+    default:
+      break;
+  }
+  return lv;
 }

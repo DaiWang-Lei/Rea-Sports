@@ -16,6 +16,7 @@ import { Crowd } from './Crowd';
 import { type CupState, CupsView } from './CupsView';
 import { Effects, type ServeCue } from './Effects';
 import type { ReplayFrame } from './Replay';
+import type { AvatarBody } from './avatar/types';
 import type { PaddlePose } from './paddlePose';
 import { buildScenery, SKY } from './Scenery';
 
@@ -134,6 +135,19 @@ export class Renderer {
     this.cupsView = new CupsView(this.root);
     this.setSplit(false);
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /** 换一边的人物（和电脑对打时每个对手有自己的样子）；make(true) = 半透明的那份 */
+  setAvatar(side: Side, make: (translucent: boolean) => AvatarBody): void {
+    this.avatars[side].remove();
+    this.avatars[side] = new AvatarView(this.root, make);
+    this.setSplit(this.split);
+  }
+
+  /** 换回菜单里选的人物 */
+  resetAvatar(side: Side): void {
+    const id = avatarsInUse()[side];
+    this.setAvatar(side, (t) => createAvatarBody(id, t));
   }
 
   /**

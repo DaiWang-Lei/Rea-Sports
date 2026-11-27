@@ -143,6 +143,9 @@ export class VersusApp {
       onEvent: (e) => this.onMatchEvent(e),
     });
     this.view.setSim(this.sim);
+    // 从和电脑对打切过来：远端换回首页选的人物，看台坐满
+    this.view.renderer.resetAvatar('far');
+    this.view.renderer.crowd.setFill(1);
     const root = (this.layer = document.createElement('div'));
     host.root.appendChild(root);
     root.insertAdjacentHTML(
