@@ -12,6 +12,7 @@
 - 连续回击：https://daiwang-lei.github.io/Rea-Sports/?mode=challenge
 - 发球机练习：https://daiwang-lei.github.io/Rea-Sports/?mode=practice
 - 体感调试页：https://daiwang-lei.github.io/Rea-Sports/imu-debug.html
+- 联机测试（两台电脑能不能直连、延迟多少）：https://daiwang-lei.github.io/Rea-Sports/net.html
 
 在线版里，手机用 **WebRTC 直连**电脑：只有「握手」消息经过公共免费的 MQTT 服务器（EMQX，国内节点优先），
 体感数据在同一 Wi-Fi 里由手机直接发给电脑，延迟和本地一样。用法：
@@ -47,6 +48,7 @@ pnpm dev          # 打开 https://localhost:5288
 | 发球机练习 | https://localhost:5288/?mode=practice  | 用手机 / Joy-Con / 键盘挥拍回球，每球给出时机、正反手、力度、旋转    |
 | 体感调试页 | https://localhost:5288/imu-debug.html  | 连接手机或 Joy-Con、看数据、检查清单、震动、录挥拍样本、看挥拍识别   |
 | 视频打点   | https://localhost:5288/rhythm.html     | 对照 WSR / Switch Sports Resort 实机视频测节奏，和仿真对比           |
+| 联机测试   | https://localhost:5288/net.html        | 开房间、把链接发给另一台电脑：能不能直连、往返延迟、丢包、结论       |
 | 手机控制器 | 扫调试页上的二维码                     | 手机当球拍                                                           |
 | 自动演示   | https://localhost:5288/?mode=autoplay  | 电脑对电脑，看物理/规则/AI/画面/声音                                 |
 
@@ -196,6 +198,7 @@ pnpm smoke:practice-joycon      # 模拟一台 Joy-Con 平放自动测零点 →
 pnpm smoke:match [网址]         # 比赛冒烟测试：键盘模式打完一整局（中途暂停一次），出结算页
 pnpm smoke:match-joycon         # 模拟一台 Joy-Con：对阵画面用摇杆选对手 → 向上抖手柄抛球 → 发球 → 回球 → 录制下载（需先 pnpm dev）
 pnpm smoke:challenge [网址]     # 连续回击：键盘模式打到 12 分（出靶子、难度上升）后停手，出结算、存最高分
+pnpm smoke:net [网址] [截图]    # 联机测试页：两个浏览器上下文一个开房间、一个加入，能连上、测到延迟
 pnpm smoke:tv [截图目录]         # 电视界面：开机 → 谁来玩（键盘加入）→ 选人物 → 主菜单，依次进出比赛、连续回击、练习（先看「怎么玩」）
 pnpm smoke:versus               # 模拟两台 Joy-Con：1 人按 X 换成 2 人 → 加入 → 各自发球、回球 → 断开自动暂停再继续 → 换回 1 人（需先 pnpm dev）
 pnpm smoke:tools                # 调参面板（改参数、存本机、恢复默认）和视频打点页（打点、指标、仿真对比）

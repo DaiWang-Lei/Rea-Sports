@@ -141,6 +141,10 @@ function showMenu(): void {
           <strong>视频打点（对照实机视频测节奏）</strong>
           <span>M4：在 WSR / Switch Sports Resort 的视频里给击球、落台、抛球打点，和我们的仿真比节奏</span>
         </a>
+        <a class="menu-item" href="net.html">
+          <strong>联机测试（两台电脑能不能直连）</strong>
+          <span>远程对打之前：开一个房间、把链接发给另一台电脑，看能不能直连、延迟多少、丢多少包</span>
+        </a>
         <a class="menu-item" href="imu-debug.html">
           <strong>体感调试（手机 / Joy-Con）</strong>
           <span>M0：扫码连手机或配对 Joy-Con、看数据、跑检查清单、录挥拍样本</span>

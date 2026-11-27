@@ -1,0 +1,167 @@
+/* 联机测试页：和电视界面同一套颜色，电脑和手机上都能看 */
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, var(--tv-sky-top), var(--tv-sky-bottom));
+  font-family: var(--tv-font);
+  color: var(--tv-ink);
+}
+
+.nt {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nt h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(18, 62, 112, 0.35);
+}
+
+.nt-sub {
+  margin: -8px 0 0;
+  color: #fff;
+  font-weight: 700;
+}
+
+.nt-card {
+  padding: 20px 22px;
+  border-radius: 20px;
+  background: var(--tv-card);
+  box-shadow: var(--tv-shadow);
+}
+
+.nt-card h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.nt-room {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.nt-room canvas {
+  flex: none;
+  width: 150px;
+  height: 150px;
+  border-radius: 12px;
+}
+
+.nt-code {
+  font-size: 40px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: var(--tv-accent);
+}
+
+.nt-link {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.nt-link input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 2px solid var(--tv-card-2);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--tv-ink);
+  background: var(--tv-card-2);
+}
+
+.nt-note {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--tv-ink-dim);
+  line-height: 1.6;
+}
+
+.nt-verdict h2 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 900;
+}
+
+.nt-verdict.good h2 {
+  color: var(--tv-good);
+}
+
+.nt-verdict.ok h2 {
+  color: var(--tv-p1);
+}
+
+.nt-verdict.slow h2 {
+  color: #d98b00;
+}
+
+.nt-verdict.fail h2 {
+  color: var(--tv-bad);
+}
+
+.nt-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.nt-stats dt {
+  color: var(--tv-ink-dim);
+}
+
+.nt-stats dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+.nt-log {
+  margin: 0;
+  padding-left: 22px;
+  line-height: 1.8;
+}
+
+.nt-log small {
+  color: var(--tv-ink-dim);
+  margin-left: 6px;
+}
+
+.nt-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.nt button {
+  padding: 12px 28px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffb547, var(--tv-accent));
+  color: #fff;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 900;
+  box-shadow: var(--tv-shadow);
+  cursor: pointer;
+}
+
+.nt-link button {
+  padding: 8px 16px;
+  font-size: 15px;
+}
+
+@media (max-width: 560px) {
+  .nt-room {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

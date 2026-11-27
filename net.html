@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2240%22 cy=%2240%22 r=%2230%22 fill=%22%23d62828%22/%3E%3Crect x=%2252%22 y=%2258%22 width=%2214%22 height=%2236%22 rx=%225%22 transform=%22rotate(-45 59 76)%22 fill=%22%23c9a46a%22/%3E%3Ccircle cx=%2278%22 cy=%2224%22 r=%2210%22 fill=%22%23fff%22/%3E%3C/svg%3E"
+    />
+    <title>联机测试</title>
+  </head>
+  <body>
+    <main class="nt">
+      <h1>联机测试</h1>
+      <p class="nt-sub">看两台电脑之间能不能直接连上、延迟多少（不需要自己的服务器）</p>
+      <section class="nt-card nt-room" id="room"></section>
+      <section class="nt-card nt-verdict" id="verdict"></section>
+      <section class="nt-card">
+        <dl class="nt-stats" id="stats"></dl>
+      </section>
+      <section class="nt-card">
+        <h2>过程</h2>
+        <ol class="nt-log" id="log"></ol>
+      </section>
+      <div class="nt-actions">
+        <button id="copy">复制测试结果</button>
+      </div>
+    </main>
+    <script type="module" src="/src/nettest/nettest.ts"></script>
+  </body>
+</html>
