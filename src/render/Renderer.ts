@@ -13,6 +13,7 @@ import { AvatarView } from './AvatarView';
 import { BallMachineView } from './BallMachineView';
 import { type BallSpin, BallView, type TrailStyle } from './BallView';
 import { Crowd } from './Crowd';
+import { type CupState, CupsView } from './CupsView';
 import { Effects, type ServeCue } from './Effects';
 import type { ReplayFrame } from './Replay';
 import type { PaddlePose } from './paddlePose';
@@ -65,6 +66,8 @@ export interface RenderFrame {
   machine?: Vec3;
   /** 多球训练时回出去、还在飞的球 */
   extraBalls?: Vec3[];
+  /** 连续回击台上的靶子 */
+  cups?: readonly CupState[];
   /** 人发球时的最佳击球点提示：圈的位置、理想击球时刻、强力发球的半窗口（秒） */
   serveCue?: ServeCue | null;
   /** 扣杀时镜头的一下顿挫：这一帧镜头整体挪开多少（米，仿真坐标）；没有就不动 */
@@ -90,6 +93,7 @@ export class Renderer {
   /** 看台上的观众 */
   readonly crowd: Crowd;
   private readonly effects: Effects;
+  private readonly cupsView: CupsView;
   private readonly camX: Record<Side, number> = { near: 0, far: 0 };
   private lastT = 0;
   /** 上一帧画面上的东西（回放录这个） */
@@ -127,6 +131,7 @@ export class Renderer {
     this.replayCam.layers.enable(REPLAY_LAYER);
     this.machine = new BallMachineView(this.root);
     this.effects = new Effects(this.root);
+    this.cupsView = new CupsView(this.root);
     this.setSplit(false);
     window.addEventListener('resize', () => this.resize());
   }
@@ -218,6 +223,7 @@ export class Renderer {
     this.crowd.update(frame.t);
     this.effects.update(frame.t);
     this.effects.serveCue(frame.serveCue ?? null, frame.t);
+    this.cupsView.update(frame.cups ?? [], frame.t);
     // 球靠近自己时，自己再透明一些
     for (const side of this.split ? SIDES : (['near'] as const)) {
       const me = frame.players[side]?.body;

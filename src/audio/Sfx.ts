@@ -197,6 +197,12 @@ export class Sfx {
     else this.play('cheer', 0.4 * amount + 0.1, 1, this.crowdBus!);
   }
 
+  /** 球把纸杯靶子撞飞：落台声调高，清脆一点 */
+  cup(pan: number): void {
+    if (!this.ready) return;
+    this.play('table', 0.8, 1.9, this.panner(pan));
+  }
+
   /** 球打到人身上 / 脸上：击球声放慢、闷一点 */
   bonk(pan: number): void {
     if (!this.ready) return;

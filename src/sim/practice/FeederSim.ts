@@ -64,6 +64,8 @@ type HitInfo = Omit<ShotReport, 'result' | 'landing'>;
 
 /** 多球训练：击球后至少隔这么久再送下一球（秒） */
 const MULTI_GAP = 0.3;
+/** 判完结果的回球再飞多久（秒）就收掉：只是给画面看的，落地后也收掉 */
+const SPENT_LIFE = 2.5;
 
 export type FeedResult =
   'in' | 'out' | 'net' | 'own' | 'missed' | 'early' | 'late' | 'reach' | 'volley';
@@ -179,6 +181,8 @@ export class FeederSim {
   last: ShotReport | null = null;
   /** 多球训练时回出去、还在飞的球 */
   readonly flyers: Flyer[] = [];
+  /** 已经判完结果、还在飞的回球（只给画面看，落地后收掉） */
+  readonly spent: { ball: BallState; until: number }[] = [];
   private lastFeedT = -Infinity;
   /** 本球的状态 */
   private feedSpin: FeedSpin = 'flat';
@@ -303,6 +307,7 @@ export class FeederSim {
       this.resolver.end();
       this.parkBall();
       this.flyers.length = 0;
+      this.spent.length = 0;
     } else if (this.phase.kind === 'paused') {
       this.phase = { kind: 'wait', until: this.t + 0.8 };
     }
@@ -339,7 +344,20 @@ export class FeederSim {
       }
     }
     this.stepFlyers(dt);
+    this.stepSpent(dt);
     this.t += dt;
+  }
+
+  /** 判完结果的回球接着飞，落地或飞够久了收掉 */
+  private stepSpent(dt: number): void {
+    for (let i = this.spent.length - 1; i >= 0; i--) {
+      const s = this.spent[i];
+      this.ballEvents.length = 0;
+      stepBall(s.ball, dt, this.t, this.tune.physics, this.rng, this.ballEvents);
+      for (const e of this.ballEvents) this.emitBallEvent(e);
+      const landed = this.ballEvents.some((e) => e.type === 'floor');
+      if (landed || this.t >= s.until || !isFiniteVec(s.ball.p)) this.spent.splice(i, 1);
+    }
   }
 
   /** 多球训练：回出去的球各自飞，落台 / 落地 / 飞远了就出结果 */
@@ -372,6 +390,9 @@ export class FeederSim {
       if (result) {
         this.record(result, f.info);
         this.flyers.splice(i, 1);
+        // 落台后接着往前飞（画面上不会凭空消失）
+        if (result.result === 'in' || result.result === 'own')
+          this.spent.push({ ball: f.ball, until: this.t + SPENT_LIFE });
       }
     }
   }
@@ -414,7 +435,7 @@ export class FeederSim {
   private feed(): void {
     const rng = this.rng;
     const lv = this.level;
-    this.machine = vec3(rng.uniform(-0.25, 0.25), MACHINE_Y, MACHINE_Z);
+    this.machine = this.feedOrigin();
     // 落点：x 按区域（玩家视角的正手 / 反手半台），y 为近端半台
     const fhX = forehandSign(this.player);
     const spread = lv === 1 ? 0.45 : lv === 2 ? 0.58 : 0.66;
@@ -487,6 +508,14 @@ export class FeederSim {
     this.replan();
     this.phase = { kind: 'incoming', since: this.t };
   }
+
+  /** 这一球从哪里送出来（发球机的出球口；连续回击里是教练的球拍） */
+  protected feedOrigin(): Vec3 {
+    return vec3(this.rng.uniform(-0.25, 0.25), MACHINE_Y, MACHINE_Z);
+  }
+
+  /** 每一球出了结果（连续回击用来计分） */
+  protected onResult(_report: ShotReport): void {}
 
   private replan(): void {
     const plan = planContact(this.ball, this.t, 'near', this.feedPopup, this.tune);
@@ -707,6 +736,7 @@ export class FeederSim {
       st.streak = 0;
     }
     this.events.push({ type: 'result', t: this.t, report });
+    this.onResult(report);
   }
 
   drainEvents(): FeederEvent[] {

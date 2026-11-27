@@ -6,6 +6,7 @@ import { AVATAR_THUMBS } from '@/render/avatar/thumbs';
 import { MatchSim } from '@/sim/MatchSim';
 import { loadAvatarChoice, saveAvatarChoice } from './avatarChoice';
 import { GameView } from './GameView';
+import { ChallengeApp } from './challenge/ChallengeApp';
 import { PlayHost } from './PlayHost';
 import { PracticeApp } from './practice/PracticeApp';
 import { loadOverrides, overrideCount, resetOverrides } from './shared/tuningStore';
@@ -123,6 +124,10 @@ function showMenu(): void {
           <strong>双人对打（分屏，两个手柄）</strong>
           <span>左右分屏，各拿一只 Joy-Con 或手机。1P 用「你」的人物，2P 用「对手」的</span>
         </a>
+        <a class="menu-item" href="?mode=challenge">
+          <strong>连续回击（教练不停供球）</strong>
+          <span>回一球 1 分、漏一球就结束；满 10 分后台上出现靶子，打中再加 3 分。最多 4 人轮流</span>
+        </a>
         <a class="menu-item" href="?mode=practice">
           <strong>发球机练习（手机 / Joy-Con / 键盘）</strong>
           <span>M2：真正用挥拍回球。每一球告诉你早了还是晚了、正手还是反手、力度和旋转</span>
@@ -179,9 +184,10 @@ function showMenu(): void {
 
 const mode = params.get('mode');
 // 进场前先把选的人物准备好（带骨骼的模型要下载）
-if (mode === 'autoplay' || mode === 'match' || mode === 'practice' || mode === 'versus')
+if (['autoplay', 'match', 'practice', 'versus', 'challenge'].includes(mode ?? ''))
   await preloadAvatars(loadAvatarChoice());
 if (mode === 'autoplay') startAutoplay();
 else if (mode === 'match' || mode === 'versus') new PlayHost(app, mode);
 else if (mode === 'practice') new PracticeApp(app);
+else if (mode === 'challenge') new ChallengeApp(app);
 else showMenu();

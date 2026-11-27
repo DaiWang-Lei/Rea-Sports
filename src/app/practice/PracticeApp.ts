@@ -319,7 +319,7 @@ export class PracticeApp {
       spin: ballSpin(s.ball.v, s.ball.w),
       players: { near: { player: s.player, body, paddle: this.nearPaddle(t, body) } },
       machine: s.machine,
-      extraBalls: s.flyers.map((f) => f.ball.p),
+      extraBalls: [...s.flyers, ...s.spent].map((f) => f.ball.p),
     });
   }
 

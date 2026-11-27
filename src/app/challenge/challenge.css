@@ -1,0 +1,84 @@
+/* 连续回击：沿用练习页的面板样式（practice.css），这里只有计分板和结算 */
+
+.ch-board {
+  position: absolute;
+  top: 2vh;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 1.4vw;
+  padding: 0.6vh 1.6vw;
+  border-radius: 14px;
+  background: rgba(10, 16, 24, 0.6);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.ch-score {
+  font-size: 6vh;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.ch-best,
+.ch-who {
+  font-size: 2vh;
+  opacity: 0.8;
+}
+
+.ch-who {
+  color: #8ecaff;
+  font-weight: 700;
+  opacity: 1;
+}
+
+.ch-pop {
+  position: absolute;
+  top: 11vh;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  font-size: 3vh;
+  font-weight: 800;
+  color: #7cf0b0;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition:
+    opacity 0.2s,
+    transform 0.6s;
+  pointer-events: none;
+}
+
+.ch-pop.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(-1.5vh);
+}
+
+.ch-pop.big {
+  color: #ffd166;
+  font-size: 4vh;
+}
+
+.ch-card {
+  width: min(560px, 100%) !important;
+}
+
+.ch-final {
+  font-size: 22px;
+  margin: 6px 0 10px;
+}
+
+.ch-final b {
+  font-size: 56px;
+  padding-right: 6px;
+}
+
+.ch-new {
+  margin-left: 12px;
+  color: #ffd166;
+  font-weight: 800;
+}
+
+.ch-rank b {
+  font-size: 20px;
+}

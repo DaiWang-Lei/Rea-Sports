@@ -8,6 +8,7 @@
 - 首页：https://daiwang-lei.github.io/Rea-Sports/
 - 和电脑对打：https://daiwang-lei.github.io/Rea-Sports/?mode=match
 - 双人对打（分屏）：https://daiwang-lei.github.io/Rea-Sports/?mode=versus
+- 连续回击：https://daiwang-lei.github.io/Rea-Sports/?mode=challenge
 - 发球机练习：https://daiwang-lei.github.io/Rea-Sports/?mode=practice
 - 体感调试页：https://daiwang-lei.github.io/Rea-Sports/imu-debug.html
 
@@ -35,16 +36,17 @@ pnpm dev          # 打开 https://localhost:5288
 - 端口固定为 5288（WebHID 的授权按网址记忆，端口变了要重新授权）。电脑上请用 **桌面版 Chrome**。
 - 服务器监听局域网，同一 Wi-Fi 下的手机才能连上来。
 
-| 页面       | 地址                                  | 用途                                                               |
-| ---------- | ------------------------------------- | ------------------------------------------------------------------ |
-| 菜单       | https://localhost:5288/               | 入口；选你和对手的人物（存在本机，对打、练习、自动演示都用）       |
-| 和电脑对打 | https://localhost:5288/?mode=match    | 5 个等级的电脑对手，6 分或 11 分一局，自己发球、记分、结算         |
-| 双人对打   | https://localhost:5288/?mode=versus   | 左右分屏，两人各拿一只 Joy-Con 或手机对打                          |
-| 发球机练习 | https://localhost:5288/?mode=practice | 用手机 / Joy-Con / 键盘挥拍回球，每球给出时机、正反手、力度、旋转  |
-| 体感调试页 | https://localhost:5288/imu-debug.html | 连接手机或 Joy-Con、看数据、检查清单、震动、录挥拍样本、看挥拍识别 |
-| 视频打点   | https://localhost:5288/rhythm.html    | 对照 WSR / Switch Sports Resort 实机视频测节奏，和仿真对比         |
-| 手机控制器 | 扫调试页上的二维码                    | 手机当球拍                                                         |
-| 自动演示   | https://localhost:5288/?mode=autoplay | 电脑对电脑，看物理/规则/AI/画面/声音                               |
+| 页面       | 地址                                   | 用途                                                                 |
+| ---------- | -------------------------------------- | -------------------------------------------------------------------- |
+| 菜单       | https://localhost:5288/                | 入口；选你和对手的人物（存在本机，对打、练习、自动演示都用）         |
+| 和电脑对打 | https://localhost:5288/?mode=match     | 5 个等级的电脑对手，6 分或 11 分一局，自己发球、记分、结算           |
+| 双人对打   | https://localhost:5288/?mode=versus    | 左右分屏，两人各拿一只 Joy-Con 或手机对打                            |
+| 连续回击   | https://localhost:5288/?mode=challenge | 教练不停供球，回一球 1 分、漏一球结束；满 10 分出靶子；最多 4 人轮流 |
+| 发球机练习 | https://localhost:5288/?mode=practice  | 用手机 / Joy-Con / 键盘挥拍回球，每球给出时机、正反手、力度、旋转    |
+| 体感调试页 | https://localhost:5288/imu-debug.html  | 连接手机或 Joy-Con、看数据、检查清单、震动、录挥拍样本、看挥拍识别   |
+| 视频打点   | https://localhost:5288/rhythm.html     | 对照 WSR / Switch Sports Resort 实机视频测节奏，和仿真对比           |
+| 手机控制器 | 扫调试页上的二维码                     | 手机当球拍                                                           |
+| 自动演示   | https://localhost:5288/?mode=autoplay  | 电脑对电脑，看物理/规则/AI/画面/声音                                 |
 
 自动演示的参数：`a`、`b` = 两边电脑等级 1–5，`points` = 6 或 11，`speed` = 速度倍率（如 0.3 慢放），`seed` = 随机种子，`skip` = 开局先快进的秒数。
 
@@ -116,6 +118,16 @@ pnpm dev          # 打开 https://localhost:5288
 5. 任何一人按 +（L 按 −）或 Esc 暂停；有人的手柄断开或没有数据会自动暂停，这一分作废。
    断开的手柄重新连上后按 A 回到原来的位置，再按继续。暂停里可以调宽容度、时机提示、两人各自的持拍手、观众声、画面延迟补偿。
 
+## 连续回击怎么玩
+
+1. 打开「连续回击」，连接设备、校准（和发球机练习一样），也可以用键盘（F 正手、J 反手）。
+2. 选几个人轮流打（1–4 人，轮流用同一个手柄），按 A 开始。
+3. 对面的教练会不停用拍子把球打过来：回进一球 1 分，漏一球（没接到、出界、下网、挥空、未落台击球）这一轮就结束。
+   分数越高球越难：10 分起有上旋、下旋、球更快；25 分起有侧旋和送你扣杀的高球，供球也更紧凑。
+4. 满 10 分后，教练那半台上会摆出纸杯靶子（最多 3 个）：回球落在纸杯上把它撞飞，这一球再加 3 分。
+   回过去的球有时会飞到教练脸上（不影响计分）。
+5. 一个人打完看分数，按 A 再来一次（几个人轮流时轮到下一位，都打完出这一轮的排行）。本机最高分存在本机。
+
 ## 调手感（M4）
 
 - **调参面板**：任何游戏页的网址加上 `?debug=1`（首页有「调手感」入口，就是 `?mode=match&debug=1`），
@@ -157,6 +169,7 @@ pnpm smoke:practice-phone       # 模拟一台手机放平指向电视校准 →
 pnpm smoke:practice-joycon      # 模拟一台 Joy-Con 平放自动测零点 → 指向电视按住 X + ZR 校准 → 挥拍回球（需先 pnpm dev）
 pnpm smoke:match [网址]         # 比赛冒烟测试：键盘模式打完一整局（中途暂停一次），出结算页
 pnpm smoke:match-joycon         # 模拟一台 Joy-Con：向上抖手柄抛球 → 发球 → 回球 → 录制下载（需先 pnpm dev）
+pnpm smoke:challenge [网址]     # 连续回击：键盘模式打到 12 分（出靶子、难度上升）后停手，出结算、存最高分
 pnpm smoke:versus               # 模拟两台 Joy-Con：1 人按 X 换成 2 人 → 加入 → 各自发球、回球 → 断开自动暂停再继续 → 换回 1 人（需先 pnpm dev）
 pnpm smoke:tools                # 调参面板（改参数、存本机、恢复默认）和视频打点页（打点、指标、仿真对比）
 pnpm analyze:practice xxx.json  # 分析「录制这局」的文件（练习逐球、比赛逐分）
@@ -181,7 +194,7 @@ src/render/    three.js 画面：晴天户外球场与看台（Scenery）、球�
 src/audio/     音效：CC0 真实录音（samples/，来源见 NOTICE），撞击声随机挑一下、按力度调音量；观众两层循环声随回合推进、只在打球时放（音量可调）
 src/ui/        画面文字层（比分、提示）
 src/app/       入口、自动演示、对打页（PlayHost：和电脑对打 match/、双人分屏对打 versus/ 共用画面和输入，切换不刷新）、
-               发球机练习页（practice/）、共用的连接与校准、延迟补偿、比赛小字（shared/）、体感输入管理（input/）
+               发球机练习页（practice/）、连续回击页（challenge/）、共用的连接与校准、延迟补偿、比赛小字（shared/）、体感输入管理（input/）
 src/debug/     体感调试页、调参面板
 src/rhythm/    视频打点页与节奏指标（metrics.ts 是纯逻辑）
 src/phone/     手机控制器页
@@ -202,6 +215,7 @@ scripts/       soak（批量对局）、bench-solver、冒烟测试、人物头�
 - [x] M1 物理 / 规则 / 电脑 AI / 自动演示
 - [x] M2 挥拍识别 + 击球判定 + 发球机练习（手机 / Joy-Con / 键盘）—— **待实机试打**
 - [x] M3 和电脑对打：发球（按键 / 向上抖手柄）、选对手和分制、比分、震动、暂停（断开自动暂停）、结算 —— **待实机试打**
+- [x] 连续回击：教练用拍子不停供球、回一球 1 分、漏一球结束，越往后越难，满 10 分出纸杯靶子（打中 +3），最多 4 人轮流、存本机最高分
 - [x] 双人分屏对打：两只 Joy-Con / 手机按 A 加入、左右分屏（每人在自己的半屏里半透明）、各自的提示和震动、
       断开自动暂停、结算 —— **待实机试打**
 - [x] 画面：晴天户外球场（草地、广告围挡、看台观众、太阳实时阴影）、人物（菜单里选你和对手：两种 Q 版、
