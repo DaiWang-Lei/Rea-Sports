@@ -1,4 +1,4 @@
-/** 电视界面的图标（自己画的简单 SVG）：比赛、连续回击、练习 */
+/** 电视界面的图标（自己画的简单 SVG）：比赛、连续回击、练习、远程对打 */
 
 const svg = (body: string) =>
   `<svg class="tv-icon" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${body}</svg>`;
@@ -38,3 +38,18 @@ export const ICON_PRACTICE = svg(`
   <circle cx="104" cy="42" r="6" fill="#fff" stroke="#ffb547" stroke-width="3" opacity="0.7"/>
   <rect x="30" y="92" width="8" height="10" rx="3" fill="#1d3557"/>
   <rect x="54" y="92" width="8" height="10" rx="3" fill="#1d3557"/>`);
+
+/** 远程对打：两只球拍隔着两道信号弧 */
+export const ICON_ONLINE = svg(`
+  <circle cx="60" cy="60" r="56" fill="#e8fff2"/>
+  <g transform="rotate(-30 30 64)">
+    <rect x="25" y="72" width="10" height="26" rx="4" fill="#c98f4e"/>
+    <circle cx="30" cy="56" r="18" fill="#e63946"/>
+  </g>
+  <g transform="rotate(30 90 64)">
+    <rect x="85" y="72" width="10" height="26" rx="4" fill="#a8743b"/>
+    <circle cx="90" cy="56" r="18" fill="#2b2d42"/>
+  </g>
+  <path d="M52 40 Q60 32 68 40" fill="none" stroke="#23b26d" stroke-width="5" stroke-linecap="round"/>
+  <path d="M46 32 Q60 18 74 32" fill="none" stroke="#23b26d" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="60" cy="48" r="5" fill="#23b26d"/>`);

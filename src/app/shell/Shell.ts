@@ -25,7 +25,8 @@ export interface Player extends ShellPlayer {
   avatar: AvatarId;
 }
 
-export type ModeKind = 'match' | 'challenge' | 'practice';
+/** online = 远程对打（和另一台电脑上的人） */
+export type ModeKind = 'match' | 'challenge' | 'practice' | 'online';
 
 export class Shell {
   readonly renderer: Renderer;
@@ -42,7 +43,14 @@ export class Shell {
   private readonly repeats = new Map<string, NavRepeat>();
   private last = performance.now();
 
-  constructor(readonly root: HTMLElement) {
+  /**
+   * joinRoom：打开的是别人发来的远程对打链接（?room=…）。开机、加入、选人物之后直接进这个房间；
+   * 用过一次就清掉（之后回到菜单就是平时的菜单）
+   */
+  constructor(
+    readonly root: HTMLElement,
+    private joinRoom: string | null = null
+  ) {
     root.className = 'game-root tv';
     const canvas = document.createElement('canvas');
     canvas.className = 'game-canvas';
@@ -124,13 +132,23 @@ export class Shell {
       input: this.input,
       exit: () => this.backToMenu(),
       players: this.players,
+      room: kind === 'online' ? this.joinRoom : null,
     };
-    if (kind === 'match')
+    if (kind === 'online') {
+      this.joinRoom = null;
+      this.mode = new PlayHost(this.root, 'online', ctx);
+    } else if (kind === 'match')
       this.mode = new PlayHost(this.root, this.players.length > 1 ? 'versus' : 'match', ctx);
     else if (kind === 'challenge') {
       this.renderer.resetAvatar('far');
       this.mode = new ChallengeApp(this.root, ctx);
     } else this.mode = new PracticeApp(this.root, ctx);
+  }
+
+  /** 选好人物之后：打开的是别人的远程对打链接就直接进房间，否则到主菜单 */
+  toMenu(): void {
+    if (this.joinRoom) this.launch('online');
+    else this.show(new MainMenu(this));
   }
 
   /** 玩法里选了「回到菜单」：收回画面和输入，回到主菜单 */

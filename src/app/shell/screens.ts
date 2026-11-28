@@ -8,7 +8,7 @@ import { type AvatarId, ROSTER } from '@/render/avatar/roster';
 import { AVATAR_THUMBS } from '@/render/avatar/thumbs';
 import { FocusNav } from '@/ui/tv/FocusNav';
 import { TvOverlay } from '@/ui/tv/TvOverlay';
-import { ICON_CHALLENGE, ICON_MATCH, ICON_PRACTICE } from '@/ui/tv/icons';
+import { ICON_CHALLENGE, ICON_MATCH, ICON_ONLINE, ICON_PRACTICE } from '@/ui/tv/icons';
 import type { CalibrateResult, InputDevice } from '../input/MotionInput';
 import { SettingsPanel } from '../shared/settingsView';
 import { deviceWords } from '../shared/SetupFlow';
@@ -276,7 +276,7 @@ export class CharacterScreen implements Screen {
     this.shell.players[i].avatar = ROSTER[this.cursor[i]].id;
     this.shell.sfx.ui('ok');
     if (this.locked.every(Boolean)) {
-      void this.shell.setAvatars().then(() => this.shell.show(new MainMenu(this.shell)));
+      void this.shell.setAvatars().then(() => this.shell.toMenu());
     }
     this.render();
   }
@@ -328,7 +328,9 @@ export class MainMenu extends FocusScreen {
         <button class="tv-card" data-focus data-act="challenge">${ICON_CHALLENGE}
           <b>连续回击</b><span>教练不停供球<br/>回一球 1 分，漏一球结束</span></button>
         <button class="tv-card" data-focus data-act="practice">${ICON_PRACTICE}
-          <b>练习</b><span>发球机送球<br/>每一球告诉你早了还是晚了</span></button>
+          <b>练习</b><span>发球机送球<br/>每一球告诉你早还是晚</span></button>
+        <button class="tv-card" data-focus data-act="online">${ICON_ONLINE}
+          <b>远程对打</b><span>和另一台电脑上的人打<br/>发个链接就行</span></button>
       </div>
       <div class="tv-corner">
         <button class="tv-small-btn" data-focus data-act="players">换人</button>
@@ -346,6 +348,7 @@ export class MainMenu extends FocusScreen {
     on('match', () => shell.launch('match'));
     on('challenge', () => shell.launch('challenge'));
     on('practice', () => shell.launch('practice'));
+    on('online', () => shell.launch('online'));
     on('players', () => shell.show(new JoinScreen(shell)));
     on('settings', () => shell.show(new SettingsScreen(shell)));
   }

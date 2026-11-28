@@ -67,14 +67,14 @@ check(saved === 'skater-boy', `人物存下来了（${saved}）`);
 await page.screenshot({ path: `${dir}/smoke-tv-menu.png` });
 
 /** 从主菜单进一个玩法（第 i 张卡），看到它自己的面板，再回到菜单 */
-async function visit(i: number, name: string, panel: string) {
+async function visit(i: number, name: string, panel: string, howtoCard = true) {
   await key('ArrowLeft', 3);
   await key('ArrowRight', i);
   await key('Enter');
   await sleep(2500);
   // 第一次进来先是「怎么玩」：A 知道了
   const howto = await page.locator('.tv-howto').isVisible();
-  check(howto, `${name}：先看「怎么玩」`);
+  if (howtoCard) check(howto, `${name}：先看「怎么玩」`);
   if (howto) {
     await page.screenshot({ path: `${dir}/smoke-tv-howto-${i}.png` });
     await key('Enter');
@@ -90,6 +90,8 @@ async function visit(i: number, name: string, panel: string) {
 await visit(0, '比赛（和电脑）', '.tv-vs');
 await visit(1, '连续回击', '[data-spin="players"]');
 await visit(2, '练习', '[data-spin="level"]');
+// 远程对打：等待页上有房间链接（这里只看能进去、能回来，联机本身见 smoke:online）
+await visit(3, '远程对打', '.tv-qr canvas', false);
 
 console.log(
   `电视界面：${fails.length ? '不正常' : '正常'}；页面报错：${errors.length ? errors.join('\n') : '无'}`

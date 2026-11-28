@@ -38,8 +38,10 @@ const read = (page: import('playwright-core').Page) =>
   page.evaluate(`(() => {
     const n = window.__net;
     const med = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
-    return { ...n.state, n: n.direct.rtts.length, rtt: med(n.direct.rtts), rn: n.relay.rtts.length, relayRtt: med(n.relay.rtts) };
-  })()`) as Promise<Net['state'] & { n: number; rtt?: number; rn: number; relayRtt?: number }>;
+    return { ...n.state, n: n.direct.rtts.length, sent: n.direct.sent, rtt: med(n.direct.rtts), rn: n.relay.rtts.length, relayRtt: med(n.relay.rtts) };
+  })()`) as Promise<
+    Net['state'] & { n: number; sent: number; rtt?: number; rn: number; relayRtt?: number }
+  >;
 
 const host = await open('开房间', `${BASE}/net.html`);
 await sleep(1500);
@@ -48,10 +50,10 @@ const guest = await open('加入', `${BASE}/net.html?room=${room}`);
 let h = await read(host);
 let g = await read(guest);
 const t0 = Date.now();
-while (Date.now() - t0 < 50000) {
+while (Date.now() - t0 < 60000) {
   h = await read(host);
   g = await read(guest);
-  if ((h.n >= 20 && g.n >= 20 && h.rn >= 10 && g.rn >= 10) || h.failed || g.failed) break;
+  if ((h.sent >= 64 && g.sent >= 64 && h.rn >= 20 && g.rn >= 20) || h.failed || g.failed) break;
   await sleep(500);
 }
 await host.screenshot({ path: process.argv[3] ?? 'smoke-net.png', fullPage: true });
@@ -70,7 +72,14 @@ console.log(`结论：${verdictText}`);
 const copied = (await host.evaluate('window.__net.resultText()')) as string;
 console.log(`复制的结果：\n${copied}`);
 const ok =
-  h.connected && g.connected && h.n >= 20 && g.n >= 20 && h.rn >= 10 && g.rn >= 10 && !!verdictText;
+  h.connected &&
+  g.connected &&
+  h.n >= 60 &&
+  g.n >= 60 &&
+  h.rn >= 20 &&
+  g.rn >= 20 &&
+  !!verdictText &&
+  !verdictText.startsWith('正在');
 console.log(
   `联机测试页：${ok ? '正常' : '不正常'}；页面报错：${errors.length ? errors.join('\n') : '无'}`
 );

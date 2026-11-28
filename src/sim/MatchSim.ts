@@ -11,7 +11,7 @@ import { CpuBrain, type BrainHost } from './ai/CpuBrain';
 import type { HitDecision, WhiffReason } from './ai/ShotPlanner';
 import type { SwingFeatures, SwingInput, SwingOutcome } from './hit/HitResolver';
 import { ballState, type BallEvent, type BallState, stepBall } from './ball/physics';
-import { BALL, GRAVITY, otherSide, type Side, sideDir, SIM_DT } from './constants';
+import { BALL, GRAVITY, otherSide, type Side, sideDir, SIM_DT, TABLE } from './constants';
 import { HumanPlayer, type HumanMissReason, type HumanShot } from './players/HumanPlayer';
 import {
   createPlayer,
@@ -24,6 +24,7 @@ import {
   COWER_DROP,
 } from './players/PlayerSim';
 import type { MoverLimits } from './players/Mover';
+import { RemotePlayer } from './players/RemotePlayer';
 import { tossPhysics, tossSpeed } from './players/serveToss';
 import { type PointReason, Referee, type RefereeInput, type RefereeOutput } from './rally/Referee';
 import { type GameResult, Scoring } from './rally/Scoring';
@@ -49,6 +50,26 @@ export interface MatchOptions {
   humanLimits?: MoverLimits;
   /** 人类玩家的宽容度 0..1 */
   leniency?: number;
+  /**
+   * 远程对打：这一边由对方的电脑控制。对方的击球在他自己那边判定，结果经网络传过来（remoteToss / remoteHit / remotePoint）。
+   * 谁接球谁判：球朝对方飞的时候（我方击出、对方抛球）本机裁判不判分，等对方传来回球或这一分的结果
+   */
+  remote?: Side;
+}
+
+/** 对方传来的一拍（已换算成本机的坐标和仿真时间） */
+export interface RemoteHit {
+  /** 击球时刻（本机仿真时间） */
+  at: number;
+  p: Vec3;
+  v: Vec3;
+  w: Vec3;
+  kind: ShotKind;
+  serve: boolean;
+  smash: boolean;
+  oops: boolean;
+  power: boolean;
+  stroke: Stroke;
 }
 
 export type MatchEvent =
@@ -68,6 +89,11 @@ export type MatchEvent =
       powerServe?: boolean;
       /** 人这一拍的时机、力度、旋转（电脑击球没有） */
       human?: HumanShot;
+      /** 刚击出时球的状态、用的正反手（远程对打时发给对方） */
+      state?: { p: Vec3; v: Vec3; w: Vec3 };
+      stroke?: Stroke;
+      /** 对方传来的击球（远程对打） */
+      remote?: boolean;
     }
   | {
       type: 'whiff';
@@ -85,7 +111,7 @@ export type MatchEvent =
   | { type: 'sideHit'; t: number; impact: number; p: Vec3 }
   /** 球落到接球方台面后没被接住，打到了接球人的脸上 / 身上（side = 被打中的人） */
   | { type: 'bodyHit'; t: number; side: Side; part: 'face' | 'body'; p: Vec3 }
-  | { type: 'toss'; t: number; side: Side }
+  | { type: 'toss'; t: number; side: Side; height: number }
   | {
       type: 'point';
       t: number;
@@ -93,8 +119,10 @@ export type MatchEvent =
       reason: PointReason;
       score: Record<Side, number>;
       rallyHits: number;
+      /** 对方判的（远程对打：不用再发回去） */
+      remote?: boolean;
     }
-  | { type: 'let'; t: number }
+  | { type: 'let'; t: number; remote?: boolean }
   /** 这一分被中断（暂停、手柄断开），不记分，重新发球 */
   | { type: 'replay'; t: number }
   | { type: 'gameOver'; t: number; result: Exclude<GameResult, null>; score: Record<Side, number> };
@@ -158,6 +186,11 @@ export class MatchSim implements BrainHost {
   readonly players: Record<Side, PlayerSim>;
   readonly brains: Partial<Record<Side, CpuBrain>> = {};
   readonly humans: Partial<Record<Side, HumanPlayer>> = {};
+  readonly remotes: Partial<Record<Side, RemotePlayer>> = {};
+  /** 远程对打里对方那一边 */
+  readonly remoteSide: Side | null;
+  /** 正在应用对方传来的结果：不压裁判 */
+  private applyingRemote = false;
   readonly points: 6 | 11;
 
   t = 0;
@@ -194,6 +227,7 @@ export class MatchSim implements BrainHost {
       drawAt: opts.drawAt === undefined ? 20 : opts.drawAt,
       firstServer: opts.firstServer ?? 'near',
     });
+    this.remoteSide = opts.remote ?? null;
     const mk = (side: Side): PlayerSim => {
       const level = opts.cpu?.[side];
       const isCpu = level !== undefined;
@@ -201,6 +235,7 @@ export class MatchSim implements BrainHost {
         ? this.cpuLimits(level)
         : this.paced(opts.humanLimits ?? DEFAULT_HUMAN_LIMITS);
       if (isCpu) this.brains[side] = new CpuBrain(side, level, this.rng, opts.cpuStyle?.[side]);
+      else if (opts.remote === side) this.remotes[side] = new RemotePlayer(side);
       else {
         this.humans[side] = new HumanPlayer(side, this.rng, this.tune, this.windowMs, {
           leniency: opts.leniency,
@@ -270,34 +305,34 @@ export class MatchSim implements BrainHost {
 
     for (const side of SIDES) this.brains[side]?.tick(this);
     for (const side of SIDES) this.humans[side]?.tick(this);
+    for (const side of SIDES) this.remotes[side]?.tick(this);
     for (const side of SIDES) {
       const p = this.players[side];
       p.mover.update(dt, p.limits);
       keepOffTable(p.mover, this.tune);
     }
 
-    if (this.ballFree) {
-      this.ballEvents.length = 0;
-      // 抛球那一段重力放慢（见 serve.tossGravity）
-      const pp = this.phase.kind === 'toss' ? tossPhysics(this.tune) : this.tune.physics;
-      stepBall(this.ball, dt, this.t, pp, this.rng, this.ballEvents);
-      for (const e of this.ballEvents) this.onBallEvent(e);
-      this.checkFace();
-      if (!isFiniteVec(this.ball.p) || !isFiniteVec(this.ball.v)) {
-        throw new Error(`球的状态出现非法数值 t=${this.t.toFixed(3)}`);
-      }
-      // 落地后基本静止就不再模拟
-      if (
-        this.ball.p.z <= 0.021 &&
-        Math.hypot(this.ball.v.x, this.ball.v.y, this.ball.v.z) < 0.05
-      ) {
-        this.ballFree = false;
-      }
-    } else if (this.phase.kind === 'preServe') {
-      this.holdBall(this.phase.server);
-    }
+    if (this.ballFree) this.stepBallOnce(this.t);
+    else if (this.phase.kind === 'preServe') this.holdBall(this.phase.server);
 
     this.t += dt;
+  }
+
+  /** 球走一步（事件按时刻 t 算） */
+  private stepBallOnce(t: number): void {
+    this.ballEvents.length = 0;
+    // 抛球那一段重力放慢（见 serve.tossGravity）
+    const pp = this.phase.kind === 'toss' ? tossPhysics(this.tune) : this.tune.physics;
+    stepBall(this.ball, SIM_DT, t, pp, this.rng, this.ballEvents);
+    for (const e of this.ballEvents) this.onBallEvent(e);
+    this.checkFace();
+    if (!isFiniteVec(this.ball.p) || !isFiniteVec(this.ball.v)) {
+      throw new Error(`球的状态出现非法数值 t=${t.toFixed(3)}`);
+    }
+    // 落地后基本静止就不再模拟
+    if (this.ball.p.z <= 0.021 && Math.hypot(this.ball.v.x, this.ball.v.y, this.ball.v.z) < 0.05) {
+      this.ballFree = false;
+    }
   }
 
   // ---------------------------------------------------------------- 阶段流转
@@ -318,7 +353,10 @@ export class MatchSim implements BrainHost {
       // 发球方：电脑随机站位，人站在中间偏正手一点
       let x = r.x;
       if (side === server) {
-        x = this.humans[side] ? 0.15 * forehandSign(p) : this.rng.uniform(-0.35, 0.35);
+        x =
+          this.humans[side] || this.remotes[side]
+            ? 0.15 * forehandSign(p)
+            : this.rng.uniform(-0.35, 0.35);
       }
       p.mover.setTarget(x, r.y);
       this.controller(side)?.cancel();
@@ -327,8 +365,8 @@ export class MatchSim implements BrainHost {
     this.prepareServe(server, this.humans[server] ? HUMAN_TOSS_DELAY : this.tune.rules.serveDelay);
   }
 
-  private controller(side: Side): CpuBrain | HumanPlayer | undefined {
-    return this.brains[side] ?? this.humans[side];
+  private controller(side: Side): CpuBrain | HumanPlayer | RemotePlayer | undefined {
+    return this.brains[side] ?? this.humans[side] ?? this.remotes[side];
   }
 
   private prepareServe(server: Side, delay: number): void {
@@ -360,7 +398,7 @@ export class MatchSim implements BrainHost {
           (stale || Math.abs(p.y) > 8 || Math.abs(p.x) > 6 || p.z < -0.5) &&
           this.referee.state !== 'idle'
         ) {
-          this.handleReferee(this.referee.feed({ type: 'dead' }));
+          this.judge({ type: 'dead' });
         }
         break;
       }
@@ -418,7 +456,7 @@ export class MatchSim implements BrainHost {
     this.phase = { kind: 'toss', server: side, since: this.t, handZ: hand.z };
     this.players[side].tossAt = this.t;
     this.lastBallEventT = this.t;
-    this.events.push({ type: 'toss', t: this.t, side });
+    this.events.push({ type: 'toss', t: this.t, side, height });
     return vz / (GRAVITY * this.tune.serve.tossGravity);
   }
 
@@ -459,8 +497,10 @@ export class MatchSim implements BrainHost {
       rallyHits: this.rallyHits,
       ...(spec.power ? { powerServe: true } : {}),
       ...(shot ? { human: shot } : {}),
+      state: { p: { ...this.ball.p }, v: { ...built.v0 }, w: { ...built.w0 } },
+      stroke: this.players[side].stance,
     });
-    this.handleReferee(this.referee.feed({ type: 'serveHit', side }));
+    this.judge({ type: 'serveHit', side }, false);
   }
 
   cpuServe(side: Side, spec: ServeSpec): void {
@@ -492,6 +532,7 @@ export class MatchSim implements BrainHost {
    */
   hit(side: Side, spec: ShotSpec, shot?: HumanShot): void {
     if (this.phase.kind !== 'play' || !this.ballFree) return;
+    const custody = this.remoteCustody;
     const built = buildShot({ ...this.ball.p }, spec, this.tune);
     if (!built.ok) this.stats.solverFailures++;
     this.ball.v = built.v0;
@@ -519,8 +560,10 @@ export class MatchSim implements BrainHost {
       serve: false,
       rallyHits: this.rallyHits,
       ...(shot ? { human: shot } : {}),
+      state: { p: { ...this.ball.p }, v: { ...built.v0 }, w: { ...built.w0 } },
+      stroke: this.players[side].stance,
     });
-    const out = this.handleReferee(this.referee.feed({ type: 'hit', side }));
+    const out = this.judge({ type: 'hit', side }, custody);
     if (out.type === 'continue') {
       this.controller(otherSide(side))?.onIncoming(this, !!spec.oops, !!spec.smash);
     }
@@ -611,7 +654,7 @@ export class MatchSim implements BrainHost {
     }
     if (this.phase.kind !== 'play') return;
     const before = this.referee.state;
-    const out = this.handleReferee(this.referee.feed(input));
+    const out = this.judge(input);
     if (out.type !== 'continue' || !this.inFlight) return;
     const receiver = otherSide(this.inFlight.hitter);
     // 发球已落在发球方半台：接发球方开始规划
@@ -672,7 +715,130 @@ export class MatchSim implements BrainHost {
     b.y = c.y + n.y * r;
     b.z = c.z + n.z * r;
     this.events.push({ type: 'bodyHit', t: this.t, side, part, p: { ...b } });
-    this.handleReferee({ type: 'point', winner: this.inFlight.hitter, reason: part });
+    if (!this.remoteCustody)
+      this.handleReferee({ type: 'point', winner: this.inFlight.hitter, reason: part });
+  }
+
+  // ---------------------------------------------------------------- 远程对打
+
+  /** 球现在归对方判：我方击出后、对方回球之前（包括我方发球），以及对方抛球的时候 */
+  private get remoteCustody(): boolean {
+    const r = this.remoteSide;
+    if (!r || this.applyingRemote) return false;
+    const ph = this.phase;
+    if (ph.kind === 'toss') return ph.server === r;
+    return ph.kind === 'play' && !!this.inFlight && this.inFlight.hitter !== r;
+  }
+
+  /** 交给裁判；球归对方判时不判分（裁判的状态退回去，等对方的结果） */
+  private judge(input: RefereeInput, custody = this.remoteCustody): RefereeOutput {
+    const r = this.referee;
+    const snap = { state: r.state, server: r.server, last: r.last, netTouched: r.netTouched };
+    const out = r.feed(input);
+    if (custody && out.type !== 'continue') {
+      Object.assign(r, snap);
+      return { type: 'continue' };
+    }
+    return this.handleReferee(out);
+  }
+
+  /** 对方传来的结果之前，本机还停在两分之间：直接开始这一分 */
+  private catchUpPoint(): void {
+    if (this.phase.kind === 'pointOver' || this.phase.kind === 'let') this.startPoint();
+  }
+
+  /** 球追上晚到的时间：从 at 走到现在 */
+  private catchUp(at: number): void {
+    const steps = Math.min(120, Math.max(0, Math.round((this.t - at) / SIM_DT)));
+    for (let i = 0; i < steps && this.ballFree; i++) this.stepBallOnce(at + i * SIM_DT);
+  }
+
+  /** 对方抛球（at = 抛球时刻，本机仿真时间） */
+  remoteToss(height: number, at: number): void {
+    const r = this.remoteSide;
+    if (!r) return;
+    this.catchUpPoint();
+    if (this.phase.kind !== 'preServe' || this.phase.server !== r) return;
+    this.toss(r, height);
+    this.catchUp(at);
+  }
+
+  /** 对方击球（包括发球）：用他那边击出的球，按晚到的时间追上 */
+  remoteHit(h: RemoteHit): void {
+    const r = this.remoteSide;
+    if (!r) return;
+    if (h.serve) {
+      this.catchUpPoint();
+      const ph = this.phase;
+      if ((ph.kind !== 'preServe' && ph.kind !== 'toss') || ph.server !== r) return;
+      this.referee.reset(r);
+      this.referee.feed({ type: 'serveHit', side: r });
+      this.rallyHits = 1;
+    } else {
+      if (this.phase.kind !== 'play') return;
+      Object.assign(this.referee, { state: 'rallyIn', last: r, netTouched: false });
+      this.rallyHits++;
+    }
+    this.phase = { kind: 'play', since: h.at };
+    this.ball = ballState({ ...h.p }, { ...h.v }, { ...h.w });
+    this.ballFree = true;
+    this.inFlight = {
+      hitter: r,
+      kind: h.serve ? 'serve' : h.kind,
+      popup: h.oops,
+      smash: h.smash,
+      serve: h.serve,
+      power: h.power,
+      t: h.at,
+    };
+    this.lastBallEventT = this.t;
+    this.recordHit();
+    const me = this.players[r];
+    me.stance = h.stroke;
+    me.swing = {
+      start: h.at - 0.3,
+      hit: h.at,
+      end: h.at + 0.3,
+      stroke: h.stroke,
+      height: TABLE.height + 0.15,
+      kind: h.serve ? 'serve' : h.kind,
+      contact: { ...h.p },
+    };
+    this.events.push({
+      type: 'hit',
+      t: h.at,
+      side: r,
+      p: { ...h.p },
+      kind: h.serve ? 'serve' : h.kind,
+      speed: Math.hypot(h.v.x, h.v.y),
+      oops: h.oops,
+      smash: h.smash,
+      serve: h.serve,
+      rallyHits: this.rallyHits,
+      ...(h.power ? { powerServe: true } : {}),
+      remote: true,
+    });
+    this.catchUp(h.at);
+    if (!h.serve && this.phase.kind === 'play') {
+      this.controller(otherSide(r))?.onIncoming(this, h.oops, h.smash);
+    }
+  }
+
+  /** 对方判的这一分（winner 已换算成本机这边） */
+  remotePoint(winner: Side, reason: PointReason): void {
+    const k = this.phase.kind;
+    if (k === 'pointOver' || k === 'gameOver') return;
+    this.applyingRemote = true;
+    this.handleReferee({ type: 'point', winner, reason });
+    this.applyingRemote = false;
+  }
+
+  /** 对方判的重发（擦网） */
+  remoteLet(): void {
+    if (this.phase.kind !== 'play') return;
+    this.applyingRemote = true;
+    this.handleReferee({ type: 'let' });
+    this.applyingRemote = false;
   }
 
   private handleReferee(out: RefereeOutput): RefereeOutput {
@@ -710,13 +876,18 @@ export class MatchSim implements BrainHost {
         reason,
         score: { ...this.scoring.score },
         rallyHits: this.rallyHits,
+        ...(this.applyingRemote ? { remote: true } : {}),
       });
       this.inFlight = null;
       return reason === out.reason ? out : { ...out, reason };
     } else if (out.type === 'let') {
       this.phase = { kind: 'let', since: this.t };
       for (const side of SIDES) this.controller(side)?.cancel();
-      this.events.push({ type: 'let', t: this.t });
+      this.events.push({
+        type: 'let',
+        t: this.t,
+        ...(this.applyingRemote ? { remote: true } : {}),
+      });
       this.inFlight = null;
     }
     return out;

@@ -7,6 +7,7 @@ import { MatchSim } from '@/sim/MatchSim';
 import { loadAvatarChoice, saveAvatarChoice } from './avatarChoice';
 import { GameView } from './GameView';
 import { ChallengeApp } from './challenge/ChallengeApp';
+import { isValidRoom } from '@/net/signal';
 import { PlayHost } from './PlayHost';
 import { Shell } from './shell/Shell';
 import { PracticeApp } from './practice/PracticeApp';
@@ -194,8 +195,12 @@ const dev = params.has('dev');
 // 进场前先把选的人物准备好（带骨骼的模型要下载）
 if (mode || !dev) await preloadAvatars(loadAvatarChoice());
 if (mode === 'autoplay') startAutoplay();
-else if (mode === 'match' || mode === 'versus') new PlayHost(app, mode);
+else if (mode === 'match' || mode === 'versus' || mode === 'online') new PlayHost(app, mode);
 else if (mode === 'practice') new PracticeApp(app);
 else if (mode === 'challenge') new ChallengeApp(app);
 else if (dev) showMenu();
-else new Shell(app);
+else {
+  // 别人发来的远程对打链接（?room=…）：选好人物后直接进房间
+  const room = params.get('room');
+  new Shell(app, isValidRoom(room) ? room : null);
+}

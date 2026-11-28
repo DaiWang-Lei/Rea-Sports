@@ -26,6 +26,13 @@ import { deviceSwingInput, HumanPaddle, keySwingInput } from '../shared/motionPl
 import { loadPrefs } from '../shared/prefs';
 import { deviceWords, SetupFlow } from '../shared/SetupFlow';
 import { SettingsPanel } from '../shared/settingsView';
+import type { OnlineSession, SessionMsg } from '../online/OnlineSession';
+
+/** 远程连续回击：两边同时各打各的，比分数（连接由 PlayHost 持有；lobby = 回到远程对打的等待页） */
+export interface OnlineChallenge {
+  session: OnlineSession;
+  lobby: () => void;
+}
 
 interface Saved {
   /** 几个人轮流打（1..4） */
@@ -81,6 +88,8 @@ export class ChallengeApp {
   private paused = false;
   /** 这一轮：第几位在打、每位的得分 */
   private turn = 0;
+  /** 远程连续回击：对方现在的分数、打完了没有、断开了没有 */
+  private peer = { score: 0, over: false, gone: false };
   private scores: number[] = [];
   private doneAt = NaN;
   private newBest = false;
@@ -106,7 +115,8 @@ export class ChallengeApp {
   /** ctx：电视界面里用界面共用的画面、声音、输入，手柄已经连好；不给就自己建（直接用网址打开） */
   constructor(
     root: HTMLElement,
-    private readonly ctx: PlayContext | null = null
+    private readonly ctx: PlayContext | null = null,
+    private readonly online: OnlineChallenge | null = null
   ) {
     root.className = 'game-root practice challenge';
     if (ctx) {
@@ -190,6 +200,17 @@ export class ChallengeApp {
     } else if (ctx && this.setup.skipIfReady()) this.begin();
     else this.setup.render();
     void this.input.start().then(() => this.setup.render());
+    if (online) {
+      online.session.onMessage = (m) => this.onOnline(m);
+      online.session.onStatus = () => {
+        const st = online.session.status;
+        if (st === 'closed' || st === 'failed') {
+          this.peer.gone = true;
+          this.hud.flash('对方断开了', '你可以打完这一轮', 1.6, 'bad');
+          if (this.stage === 'done') this.renderPanel();
+        }
+      };
+    }
     // 冒烟测试 / 调试用：?debug=1 时把实例挂到 window 上
     if (new URLSearchParams(location.search).has('debug')) {
       (window as unknown as { __challenge: ChallengeApp }).__challenge = this;
@@ -407,9 +428,10 @@ export class ChallengeApp {
     this.begin();
   }
 
-  /** 准备好了：第一次玩先看「怎么玩」 */
+  /** 准备好了：第一次玩先看「怎么玩」；远程的两边已经在等待页准备好了，直接一起开打 */
   private begin(): void {
-    if (howToSeen('challenge')) this.newRound();
+    if (this.online) this.startOnline();
+    else if (howToSeen('challenge')) this.newRound();
     else this.tv.show(howToView('challenge', () => this.newRound()));
   }
 
@@ -431,7 +453,11 @@ export class ChallengeApp {
     this.newBest = false;
     this.tv.hide();
     this.sim.pause(false);
-    this.hud.flash(this.multi ? `玩家 ${this.turn + 1}` : '开始', '回一球 1 分，漏一球就结束', 1.4);
+    this.hud.flash(
+      this.multi ? `玩家 ${this.turn + 1}` : '开始',
+      this.online ? '和对方同时打，比谁的分高' : '回一球 1 分，漏一球就结束',
+      1.4
+    );
     this.renderBoard();
   }
 
@@ -445,6 +471,7 @@ export class ChallengeApp {
       save(this.saved);
     }
     this.stage = 'done';
+    this.sendScore(true);
     this.renderBoard();
     this.renderPanel();
   }
@@ -466,7 +493,79 @@ export class ChallengeApp {
   }
 
   private get multi(): boolean {
-    return this.saved.players > 1;
+    return !this.online && this.saved.players > 1;
+  }
+
+  // ---------------------------------------------------------------- 远程
+
+  /** 两边同时开打 */
+  private startOnline(): void {
+    this.peer = { score: 0, over: false, gone: this.peer.gone };
+    this.turn = 0;
+    this.scores = [];
+    this.stage = 'ready';
+    this.sim = this.makeSim();
+    this.startTurn();
+  }
+
+  private onOnline(m: SessionMsg): void {
+    const on = this.online!;
+    if (m.k === 'cscore') {
+      this.peer.score = m.score;
+      this.peer.over = m.over;
+      this.renderBoard();
+      if (this.stage === 'done') this.renderPanel();
+    } else if (m.k === 'start' && on.session.role === 'guest') {
+      if (m.game === 'challenge') this.startOnline();
+    } else if (m.k === 'lobby') on.lobby();
+  }
+
+  /** 把自己的分数告诉对方 */
+  private sendScore(over: boolean): void {
+    this.online?.session.send({ k: 'cscore', score: this.sim.score, over });
+  }
+
+  /** 远程连续回击打完：等对方，或两边的分数比一比 */
+  private renderOnlinePanel(): void {
+    const on = this.online!;
+    const me = this.scores[0] ?? 0;
+    const host = on.session.role === 'host';
+    if (!this.peer.over && !this.peer.gone) {
+      this.tv.show({
+        html: `<h2>你打完了</h2><div class="tv-score"><b>${me}</b>分</div>
+          <p class="tv-note">等对方打完…（对方现在 ${this.peer.score} 分）</p>
+          <div class="tv-buttons">${tvButton('home', '回到菜单')}</div>`,
+        hints: [['B', '回到菜单']],
+        onBack: () => this.exit(),
+        onAct: () => this.exit(),
+      });
+      return;
+    }
+    const them = this.peer.score;
+    const title = me === them ? '平局' : me > them ? '你赢了！' : '对方赢了';
+    this.tv.show({
+      html: `<h2 class="tv-result ${me > them ? 'win' : me < them ? 'lose' : ''}">${title}</h2>
+        <div class="tv-score">你 <b>${me}</b>:<b>${them}</b> 对方</div>
+        ${this.peer.gone ? '<p class="tv-note">对方断开了</p>' : host ? '' : '<p class="tv-note">等对方选下一局</p>'}
+        <div class="tv-buttons tv-inline">
+          ${host && !this.peer.gone ? tvButton('again', '再来一次', true, true) + tvButton('lobby', '换玩法') : ''}
+          ${tvButton('home', '回到菜单', !host || this.peer.gone, !host || this.peer.gone)}
+        </div>`,
+      hints: [
+        ['A', '确定'],
+        ['B', '回到菜单'],
+      ],
+      onBack: () => this.exit(),
+      onAct: (act) => {
+        if (act === 'again') {
+          on.session.send({ k: 'start', points: 6, game: 'challenge' });
+          this.startOnline();
+        } else if (act === 'lobby') {
+          on.session.send({ k: 'lobby' });
+          on.lobby();
+        } else this.exit();
+      },
+    });
   }
 
   private togglePause(): void {
@@ -517,6 +616,7 @@ export class ChallengeApp {
     switch (e.type) {
       case 'score': {
         this.pop(e.cup ? `+${e.gained} 打中靶子!` : '+1', e.cup);
+        this.sendScore(false);
         // 观众跟着分数越来越激动，10 分起每回一球齐喊一声
         const k = Math.min(1, e.total / 30);
         this.sfx.setCrowd(0.11 * (1 - 0.3 * k), 0.55 * k, 0.6);
@@ -574,10 +674,13 @@ export class ChallengeApp {
   /** 上方的计分板：这一轮的分数、本机最高分、轮到谁 */
   private renderBoard(): void {
     const who = this.multi ? `<span class="ch-who">玩家 ${this.turn + 1}</span>` : '';
+    const right = this.online
+      ? `对方 ${this.peer.score}${this.peer.over ? '（打完了）' : ''}`
+      : `最高 ${this.saved.best}`;
     this.boardEl.innerHTML = `
       ${who}
       <span class="ch-score">${this.sim.score}</span>
-      <span class="ch-best">最高 ${this.saved.best}</span>`;
+      <span class="ch-best">${right}</span>`;
   }
 
   /** 开始前（几个人轮流）、这一位打完、这一轮的排行 */
@@ -624,6 +727,8 @@ export class ChallengeApp {
         },
         keep
       );
+    } else if (step === 'done' && this.online) {
+      this.renderOnlinePanel();
     } else if (step === 'done') {
       const score = this.scores[this.turn] ?? 0;
       const last = this.turn + 1 >= this.saved.players;

@@ -20,4 +20,6 @@ export interface PlayContext {
   /** 回到电视菜单 */
   exit: () => void;
   players: readonly ShellPlayer[];
+  /** 远程对打：加入的房间（打开了别人发来的链接）；不给 = 自己开一个 */
+  room?: string | null;
 }

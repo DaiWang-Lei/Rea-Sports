@@ -18,7 +18,13 @@ import {
   SKILL,
 } from '@/config/opponents';
 import { tuning } from '@/config/tuning';
-import { avatarsInUse, createLookBody } from '@/render/avatar/roster';
+import {
+  avatarsInUse,
+  createLookBody,
+  isAvatarId,
+  preloadAvatars,
+  ROSTER,
+} from '@/render/avatar/roster';
 import type { SwingCommit } from '@/input/paddle/SwingDetector';
 import { opponentFace, playerFace, skillChart } from '@/ui/tv/faces';
 import { howToSeen, howToView } from '@/ui/tv/howto';
@@ -47,6 +53,9 @@ import { deviceWords, SetupFlow } from '../shared/SetupFlow';
 import { loadPrefs } from '../shared/prefs';
 import { calibrateView, SettingsPanel } from '../shared/settingsView';
 import { loadSkill, saveSkill, SKILL_HISTORY } from './skill';
+import type { OnlineSession, SessionMsg } from '../online/OnlineSession';
+import { applyRemote, outgoing } from '@/sim/online/link';
+import QRCode from 'qrcode';
 
 interface Settings {
   points: 6 | 11;
@@ -139,15 +148,34 @@ export class MatchApp {
   private calibrating = false;
   private lastStatus = 0;
 
-  constructor(private readonly host: PlayHost) {
+  /** 远程对打：和另一台电脑上的人打（null = 和电脑打）；对方连好手柄到了等待页；等待页上次刷新的时刻 */
+  private readonly online: OnlineSession | null;
+  private peerReady = false;
+  private lastLobby = 0;
+  /** 对方断开、这一局结束了（对方重新打开链接连上后回到等待页） */
+  private dropped = false;
+  /** 远程对打玩什么（开房间的一方选） */
+  private onlineGame: 'match' | 'challenge' = 'match';
+
+  constructor(
+    private readonly host: PlayHost,
+    online = false
+  ) {
     host.root.className = 'game-root practice match';
     this.input = host.input;
     this.input.multi = false;
     // 从双人切过来：每个手柄的持拍手回到这里的设置（双人时各自设过）
     this.input.setHanded(this.input.handed);
     this.view = host.view;
+    // 连接由 PlayHost 持有（换玩法时不断开）
+    this.online = online ? host.online : null;
+    if (this.online) {
+      this.online.onStatus = () => this.onOnlineStatus();
+      this.online.onMessage = (m) => this.onOnline(m);
+    }
     this.sim = this.makeSim();
     this.view.configure({
+      replays: !online,
       names: this.names(),
       nearPaddle: (t, body) => {
         const paddle = this.keyboard ? null : (this.input.active?.paddle ?? null);
@@ -190,9 +218,10 @@ export class MatchApp {
       onDone: (msg) => this.afterSetup(msg),
       onKeyboard: () => {
         this.keyboard = true;
+        host.keyboard = true;
         this.afterSetup('键盘：空格抛球，F 正手、J 反手');
       },
-      onTwoPlayers: () => this.host.switchTo('versus'),
+      onTwoPlayers: online ? undefined : () => this.host.switchTo('versus'),
       onBack: () => this.host.exit(),
     });
 
@@ -241,7 +270,7 @@ export class MatchApp {
     );
     window.addEventListener('keyup', (e) => this.keysDown.delete(e.key.toLowerCase()), { signal });
     // 电视界面里用键盘的玩家（开发用）、从双人切过来或电视界面里手柄已经定过电视方向：直接选对手
-    if (host.ctx && host.ctx.players[0]?.device === null) {
+    if ((host.ctx && host.ctx.players[0]?.device === null) || host.keyboard) {
       this.setup.skip();
       this.keyboard = true;
       this.showChoose();
@@ -302,7 +331,13 @@ export class MatchApp {
   }
 
   private names() {
-    return { near: '你', far: this.opponent.name };
+    return { near: '你', far: this.online ? this.peerName() : this.opponent.name };
+  }
+
+  /** 远程对打：对方的名字用他选的人物名 */
+  private peerName(): string {
+    const a = this.online?.peer?.avatar;
+    return ROSTER.find((e) => e.id === a)?.name ?? '对方';
   }
 
   /** 这一局的对手：自己挑的，或按熟练度配对的 */
@@ -327,6 +362,18 @@ export class MatchApp {
   private makeSim(): MatchSim {
     const s = this.settings;
     const o = this.opponent;
+    if (this.online) {
+      // 远程对打：对方在远端，开房间的一方先发球
+      return new MatchSim({
+        seed: Math.floor(Math.random() * 1e9),
+        points: s.points,
+        remote: 'far',
+        firstServer: this.online.role === 'host' ? 'near' : 'far',
+        handed: { near: this.input?.handed ?? 1, far: this.online.peer?.handed ?? 1 },
+        leniency: loadPrefs().leniency,
+        tune: tuning,
+      });
+    }
     return new MatchSim({
       seed: Math.floor(Math.random() * 1e9),
       points: s.points,
@@ -359,6 +406,12 @@ export class MatchApp {
     this.updateHint();
     this.updateStatus(now);
     if (this.rec) this.recTick(now);
+    // 远程对打的等待页：每秒更新一次状态那一行（往返延迟）；整页只在状态变了时重画，不然按钮一直被换掉、点不中
+    if (this.online && this.step === 'choose' && now - this.lastLobby > 1000) {
+      this.lastLobby = now;
+      const el = this.tv.el.querySelector('[data-online-status]');
+      if (el) el.innerHTML = `<b>${this.onlineStatusText()}</b>`;
+    }
     if (this.step === 'play' && this.sim.phase.kind === 'gameOver') {
       if (Number.isNaN(this.resultsAt)) this.resultsAt = now + 2500;
       else if (now >= this.resultsAt) this.showResults();
@@ -372,7 +425,7 @@ export class MatchApp {
 
   /** 手柄断开、或超过 0.3 秒没有数据：自动暂停（这一分作废） */
   private checkDevice(now: number): void {
-    if (this.keyboard || this.step !== 'play' || this.paused) {
+    if (this.keyboard || this.online || this.step !== 'play' || this.paused) {
       this.lostSince = NaN;
       return;
     }
@@ -490,7 +543,7 @@ export class MatchApp {
       if (b === 'confirm') this.tv.confirm();
       else if (b === 'back') this.tv.back();
       else if (b === 'pause' && this.paused) this.resume();
-      else if (b === 'players' && !this.host.ctx) this.host.switchTo('versus');
+      else if (b === 'players' && !this.host.ctx && !this.online) this.host.switchTo('versus');
       return;
     }
     if (b === 'pause') {
@@ -530,6 +583,11 @@ export class MatchApp {
   private showChoose(): void {
     this.stage = 'choose';
     this.paused = false;
+    if (this.online) {
+      this.online.send({ k: 'ready' });
+      this.renderChoose();
+      return;
+    }
     // 每次回到选对手都按现在的熟练度重新配对（自己挑的保留）
     this.matched = matchOpponent(this.skill.rating, Math.random());
     this.pick(this.picked);
@@ -538,6 +596,10 @@ export class MatchApp {
   }
 
   private startGame(): void {
+    if (this.online) {
+      this.startOnlineGame();
+      return;
+    }
     // 按熟练度配对的：按现在的熟练度重新配一个（上一局可能刚涨了分）
     if (this.picked === null && this.stage !== 'choose') {
       this.matched = matchOpponent(this.skill.rating, Math.random());
@@ -567,7 +629,7 @@ export class MatchApp {
   private showResults(): void {
     this.stage = 'over';
     this.resultsAt = NaN;
-    this.rateGame();
+    if (!this.online) this.rateGame();
     if (this.rec) this.stopRecording(true);
     this.renderResults();
   }
@@ -594,6 +656,11 @@ export class MatchApp {
   }
 
   private togglePause(): void {
+    if (this.online) {
+      // 两台电脑一起打：一边停下另一边还在走，就对不上了
+      this.view.hud.flash('远程对打不能暂停', '要离开就打完这一局', 1.4);
+      return;
+    }
     if (this.paused) this.resume();
     else this.pause('user');
   }
@@ -629,6 +696,7 @@ export class MatchApp {
   // ---------------------------------------------------------------- 比赛事件
 
   private onMatchEvent(e: MatchEvent): void {
+    if (this.online) this.sendOnline(e);
     this.rec?.push({ k: 'match', rt: performance.now(), st: this.sim.t, e });
     const g = this.game;
     switch (e.type) {
@@ -692,11 +760,15 @@ export class MatchApp {
     const recText = rec
       ? `<br/><span class="pr-rec">● 录制中 · 已录 ${rec.results} 分 · ${Math.floor(rec.elapsedMs / 60000)}:${String(Math.floor(rec.elapsedMs / 1000) % 60).padStart(2, '0')}</span>`
       : '';
-    this.statusEl.innerHTML = `${dev}<br/><span class="dim">对手：${this.opponent.name} · ${s.points} 分制 · 暂停：手机「暂停」/ Joy-Con + / Esc · 回中（指向电视按）：Joy-Con X + ZR 或 Y / 手机「回中」 · 画面延迟补偿 ${latencyMs()}ms</span>${recText}`;
+    this.statusEl.innerHTML = `${dev}<br/><span class="dim">对手：${this.online ? `远程（${this.online.role === 'host' ? '我开的房间' : '加入的房间'} ${this.online.room}）` : this.opponent.name} · ${s.points} 分制 · 暂停：手机「暂停」/ Joy-Con + / Esc · 回中（指向电视按）：Joy-Con X + ZR 或 Y / 手机「回中」 · 画面延迟补偿 ${latencyMs()}ms</span>${recText}`;
   }
 
   /** 对阵：你 VS 对手；对手、分制左右改；A 开始，B 回到菜单 */
   private renderChoose(keep = false): void {
+    if (this.online) {
+      this.renderOnline(keep);
+      return;
+    }
     const o = this.opponent;
     const st = STYLE_TEXT[o.style];
     const r = this.skill.rating;
@@ -752,6 +824,10 @@ export class MatchApp {
 
   /** 结算：胜负、比分、几行数、熟练度变化和最近几局的折线；A 再来一局，B 换对手 */
   private renderResults(): void {
+    if (this.online) {
+      this.renderOnlineResults();
+      return;
+    }
     const g = this.game;
     const { near, far } = this.sim.scoring.score;
     const result = this.sim.result;
@@ -929,5 +1005,225 @@ export class MatchApp {
     const d = rec.device;
     const gone = d !== null && !this.input.devices.has(d.key);
     if (gone || rec.elapsedMs >= RECORD_MAX_MS) this.stopRecording(true);
+  }
+
+  // ---------------------------------------------------------------- 远程对打
+
+  /** 本机的抛球、击球、判的分发给对方（时间换成本机的时刻，对方再按两边时钟的差换回去） */
+  private sendOnline(e: MatchEvent): void {
+    const m = outgoing(e, 'near');
+    if (!m || !this.online) return;
+    if (m.k === 'toss' || m.k === 'hit') m.t = this.clockReal + (m.t - this.clockSim) * 1000;
+    this.online.send(m);
+  }
+
+  private onOnline(m: SessionMsg): void {
+    const on = this.online!;
+    switch (m.k) {
+      case 'hello': {
+        // 对方的人物
+        const far = isAvatarId(m.avatar) ? m.avatar : avatarsInUse().far;
+        void preloadAvatars({ near: avatarsInUse().near, far }).then(() =>
+          this.view.renderer.resetAvatar('far')
+        );
+        this.view.setNames(this.names());
+        if (this.step === 'choose') this.renderOnline(true);
+        break;
+      }
+      case 'ready':
+        this.peerReady = true;
+        if (this.step === 'choose') this.renderOnline(true);
+        break;
+      case 'start':
+        if (on.role !== 'guest') break;
+        if (m.game === 'challenge') this.host.startChallenge();
+        else {
+          this.settings.points = m.points;
+          this.startOnlineGame();
+        }
+        break;
+      case 'lobby':
+        this.showChoose();
+        break;
+      case 'bye':
+      case 'cscore':
+        break;
+      default:
+        if (this.stage === 'play')
+          applyRemote(this.sim, m, (t) => {
+            // 还没对上时钟（刚连上的头一下）：就当是刚发生的
+            const ms = on.toLocalMs(t);
+            return Number.isFinite(ms) ? this.simAt(ms) : this.sim.t;
+          });
+    }
+  }
+
+  private onOnlineStatus(): void {
+    const st = this.online!.status;
+    const hud = this.view.hud;
+    // 网络断了正在重连：这一局先不结束，角上提示
+    if (st === 'reconnecting') hud.setBadge('网络断了', '正在重连…');
+    else hud.setBadge('');
+    if (st !== 'connected') this.peerReady = false;
+    else if (this.dropped) {
+      // 对方重新打开链接连上了：回到等待页
+      this.dropped = false;
+      this.showChoose();
+      return;
+    } else if (this.step === 'choose') this.online!.send({ k: 'ready' });
+    if (st === 'connected' && this.stage === 'play') hud.flash('重新连上了', '', 1, 'good');
+    if (this.step === 'choose') this.renderOnline(true);
+    else if ((st === 'closed' || st === 'failed') && this.stage !== 'choose') {
+      this.dropped = true;
+      this.stage = 'over';
+      this.tv.show({
+        html: `<h2>对方断开了</h2><p class="tv-note">对方关了页面或网络断了</p>
+          <div class="tv-buttons">${tvButton('home', '回到菜单', true, true)}</div>`,
+        hints: [['A', '回到菜单']],
+        onBack: () => this.host.exit(),
+        onAct: () => this.host.exit(),
+      });
+    }
+  }
+
+  /** 开始一局：开房间的一方按开始，把分制告诉对方，两边一起开始 */
+  private startOnlineGame(): void {
+    const on = this.online!;
+    if (on.role === 'host') on.send({ k: 'start', points: this.settings.points });
+    this.sim = this.makeSim();
+    this.view.setSim(this.sim);
+    this.view.setNames(this.names());
+    this.game = newGameLog();
+    this.stage = 'play';
+    this.paused = false;
+    this.resultsAt = NaN;
+    this.tv.hide();
+    this.view.renderer.crowd.setFill(1);
+    this.view.hud.flash(
+      '远程对打',
+      `${this.settings.points} 分制 · ${on.role === 'host' ? '你先发球' : '对方先发球'}`,
+      1.6
+    );
+  }
+
+  /** 远程对打：等待页上的状态那一行 */
+  private onlineStatusText(): string {
+    const on = this.online!;
+    const ready = on.status === 'connected' && !!on.peer && this.peerReady;
+    const rtt = Number.isFinite(on.rtt) ? ` · 往返 ${Math.round(on.rtt)} ms` : '';
+    const status: Record<string, string> = {
+      waiting: on.role === 'host' ? '等对方打开链接…' : '正在找房间…',
+      connecting: '正在连接…',
+      connected: ready ? `已连上${rtt}` : `已连上${rtt}，等对方连好手柄`,
+      reconnecting: '网络断了，正在重连…',
+      failed:
+        '连不上：两台电脑之间没法直接连。两边都打开 IPv6 一般就能连上（Mac：系统设置 → 网络 → Wi-Fi → 详细信息 → TCP/IP → 配置 IPv6：自动；路由器也要打开 IPv6），可以先用 net.html 测一下',
+      closed: '对方离开了',
+    };
+    return status[on.status];
+  }
+
+  /** 远程对打的等待页：开房间的一方给链接和二维码、选玩法、分制、按开始；加入的一方等对方开始 */
+  private renderOnline(keep = false): void {
+    const on = this.online!;
+    const host = on.role === 'host';
+    const ready = on.status === 'connected' && !!on.peer && this.peerReady;
+    this.tv.show(
+      {
+        className: 'tv-wide',
+        html: `
+        <h2>远程对打</h2>
+        <div class="tv-vs">
+          <div class="tv-vs-side">${playerFace(avatarsInUse().near)}<b>你</b></div>
+          <div class="tv-vs-mid">VS</div>
+          <div class="tv-vs-side">${
+            on.peer && isAvatarId(on.peer.avatar)
+              ? `${playerFace(on.peer.avatar, true)}<b>${this.peerName()}</b>`
+              : '<div class="tv-face opp">?</div><span>等对方加入</span>'
+          }</div>
+        </div>
+        ${
+          on.net && !on.net.ipv6 && on.net.nat === 'symmetric' && !ready
+            ? `<p class="tv-note">这台电脑没有 IPv6、网络又是「对称型」，和别人多半连不上：Mac 在 系统设置 → 网络 → Wi-Fi → 详细信息 → TCP/IP 里把「配置 IPv6」改成「自动」，路由器也要打开 IPv6</p>`
+            : ''
+        }
+        ${
+          host && !ready
+            ? `<div class="tv-qr" style="box-shadow:none;padding:0">
+                <canvas width="160" height="160"></canvas>
+                <div><b>把链接发给对方</b>（另一台电脑用浏览器打开）<br/>
+                <span class="tv-note" style="text-align:left;word-break:break-all">${on.link}</span></div>
+              </div>`
+            : ''
+        }
+        <p class="tv-note" data-online-status><b>${this.onlineStatusText()}</b></p>
+        ${host ? spinRow('game', '玩什么', this.onlineGame === 'match' ? '比赛' : '连续回击（同时打，比分数）') : ''}
+        ${host && this.onlineGame === 'match' ? spinRow('points', '分制', this.settings.points === 6 ? '6 分' : '11 分（球更快）') : ''}
+        ${!host && ready ? '<p class="tv-note">等对方开始</p>' : ''}
+        <div class="tv-buttons tv-inline">
+          ${host ? tvButton('start', '开始', true, ready) : ''}
+          ${host && !ready ? tvButton('copy', '复制链接', false, true) : ''}
+          ${tvButton('home', '回到菜单', !host, !host)}
+        </div>`,
+        hints: host
+          ? [
+              ['◀▶', '分制'],
+              ['A', '确定'],
+              ['B', '回到菜单'],
+            ]
+          : [['B', '回到菜单']],
+        onBack: () => this.host.exit(),
+        onSpin: (name) => {
+          if (name === 'game') {
+            this.onlineGame = this.onlineGame === 'match' ? 'challenge' : 'match';
+            this.renderOnline(true);
+          } else this.setSetting('points', this.settings.points === 6 ? 11 : 6);
+        },
+        onAct: (act) => {
+          if (act === 'start') {
+            if (!ready) this.view.hud.flash('对方还没连上', '', 1);
+            else if (this.onlineGame === 'challenge') {
+              on.send({ k: 'start', points: this.settings.points, game: 'challenge' });
+              this.host.startChallenge();
+            } else this.startOnlineGame();
+          } else if (act === 'copy') void navigator.clipboard?.writeText(on.link);
+          else if (act === 'home') this.host.exit();
+        },
+      },
+      keep
+    );
+    const qr = this.tv.el.querySelector<HTMLCanvasElement>('.tv-qr canvas');
+    if (qr) void QRCode.toCanvas(qr, on.link, { width: 160, margin: 1 });
+  }
+
+  /** 远程对打打完：开房间的一方可以再来一局 */
+  private renderOnlineResults(): void {
+    const on = this.online!;
+    const { near, far } = this.sim.scoring.score;
+    const result = this.sim.result;
+    const title = result === 'draw' ? '平局' : result === 'near' ? '你赢了！' : '对方赢了';
+    const host = on.role === 'host';
+    this.tv.show({
+      html: `
+        <h2 class="tv-result ${result === 'near' ? 'win' : result === 'far' ? 'lose' : ''}">${title}</h2>
+        <div class="tv-score">你 <b>${near}</b>:<b>${far}</b> 对方</div>
+        ${host ? '' : '<p class="tv-note">等对方开始下一局</p>'}
+        <div class="tv-buttons tv-inline">
+          ${host ? tvButton('again', '再来一局', true, true) + tvButton('lobby', '换玩法') : ''}
+          ${tvButton('home', '回到菜单', !host, !host)}
+        </div>`,
+      hints: [
+        ['A', '确定'],
+        ['B', '回到菜单'],
+      ],
+      onBack: () => this.host.exit(),
+      onAct: (act) => {
+        if (act === 'again') this.startOnlineGame();
+        else if (act === 'lobby') {
+          on.send({ k: 'lobby' });
+          this.showChoose();
+        } else if (act === 'home') this.host.exit();
+      },
+    });
   }
 }

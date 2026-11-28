@@ -31,6 +31,7 @@
     "smoke:challenge": "tsx scripts/smoke-challenge.ts",
     "smoke:tv": "tsx scripts/smoke-tv.ts",
     "smoke:net": "tsx scripts/smoke-net.ts",
+    "smoke:online": "tsx scripts/smoke-online.ts",
     "smoke:tools": "tsx scripts/smoke-tools.ts",
     "thumbs:avatars": "tsx scripts/avatar-thumbs.ts",
     "eval:swing": "tsx scripts/eval-swing.ts",

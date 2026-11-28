@@ -42,6 +42,10 @@ const LOST_MS = 2000;
 const KEEP = 240;
 /** 交换完连接信息后这么久还没连上，算打不通 */
 const CONNECT_TIMEOUT_MS = 25000;
+/** 直连测满这么多次（约 15 秒）、转发测满这么多次（约 10 秒）才给结论；刚连上的头几次不算丢包（路还没稳） */
+const MIN_DIRECT = 60;
+const MIN_RELAY = 20;
+const WARMUP = 4;
 
 const params = new URLSearchParams(location.search);
 const joinRoom = params.get('room');
@@ -62,8 +66,10 @@ const logEl = $('log');
 class Pinger {
   readonly rtts: number[] = [];
   private readonly pending = new Map<number, number>();
+  /** 发了几次；算丢包的那部分（去掉刚连上的头几次）发了几次、回来几次 */
   sent = 0;
-  answered = 0;
+  private counted = 0;
+  private answered = 0;
   private seq = 0;
 
   /** 发一个「乒」，返回要发出去的内容 */
@@ -71,6 +77,7 @@ class Pinger {
     const now = performance.now();
     this.seq++;
     this.sent++;
+    if (this.seq > WARMUP) this.counted++;
     this.pending.set(this.seq, now);
     for (const [s, t] of this.pending) if (now - t > LOST_MS * 3) this.pending.delete(s);
     return { k: 'p', s: this.seq, t: now };
@@ -79,7 +86,7 @@ class Pinger {
   /** 回来一个「乓」 */
   back(s: number, t: number): void {
     if (!this.pending.delete(s)) return;
-    this.answered++;
+    if (s > WARMUP) this.answered++;
     this.rtts.push(performance.now() - t);
     if (this.rtts.length > KEEP) this.rtts.shift();
   }
@@ -87,17 +94,17 @@ class Pinger {
   reset(): void {
     this.rtts.length = 0;
     this.pending.clear();
-    this.sent = this.answered = 0;
+    this.sent = this.counted = this.answered = this.seq = 0;
   }
 
   /** 往返统计、丢包率（还在路上的不算） */
   stats(): { rtt: RttSummary | null; loss: number } {
     const now = performance.now();
     let inFlight = 0;
-    for (const t of this.pending.values()) if (now - t < LOST_MS) inFlight++;
+    for (const [s, t] of this.pending) if (s > WARMUP && now - t < LOST_MS) inFlight++;
     return {
       rtt: summarizeRtt(this.rtts),
-      loss: lossRate(this.sent, this.answered, inFlight),
+      loss: lossRate(this.counted, this.answered, inFlight),
     };
   }
 }
@@ -113,6 +120,8 @@ const state = {
   path: null as PathKind | null,
   localType: '',
   remoteType: '',
+  /** 直连走的是 IPv4 还是 IPv6 */
+  family: '',
   /** 拿到公网地址的 STUN 服务器 */
   stunOk: new Set<string>(),
   gatheredLocal: false,
@@ -365,9 +374,11 @@ window.setInterval(() => {
       waiting: '排队',
       frozen: '还没试',
     };
-    state.pairs = Object.entries(counts)
-      .map(([k, n]) => `${PAIR_TEXT[k] ?? k} ${n}`)
-      .join('，');
+    // 直连失败后浏览器会把记录清掉：保留失败前的
+    if (Object.keys(counts).length)
+      state.pairs = Object.entries(counts)
+        .map(([k, n]) => `${PAIR_TEXT[k] ?? k} ${n}`)
+        .join('，');
     if (!pairId && state.connected) {
       stats.forEach((s) => {
         if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') pairId = s.id;
@@ -375,9 +386,13 @@ window.setInterval(() => {
     }
     const pair = pairId ? stats.get(pairId) : null;
     if (pair && state.connected) {
-      state.localType = stats.get(pair.localCandidateId)?.candidateType ?? '';
-      state.remoteType = stats.get(pair.remoteCandidateId)?.candidateType ?? '';
+      const local = stats.get(pair.localCandidateId);
+      const remote = stats.get(pair.remoteCandidateId);
+      state.localType = local?.candidateType ?? '';
+      state.remoteType = remote?.candidateType ?? '';
       state.path = pathKind(state.localType, state.remoteType);
+      const addr = `${local?.address ?? ''} ${remote?.address ?? ''}`;
+      state.family = addr.includes(':') ? 'IPv6' : /\d+\.\d+\.\d+\.\d+/.test(addr) ? 'IPv4' : '';
     }
     render();
   });
@@ -412,11 +427,13 @@ function summary() {
   const r = relay.stats();
   const dv: Verdict | null = state.failed
     ? 'fail'
-    : state.connected && d.rtt
+    : state.connected && d.rtt && direct.sent >= MIN_DIRECT
       ? verdict(true, d.rtt, d.loss)
       : null;
-  const rv: Verdict | null = r.rtt && r.rtt.count >= 10 ? verdict(true, r.rtt, r.loss) : null;
-  return { d, r, dv, rv, best: bestPath(dv, rv) };
+  const rv: Verdict | null = r.rtt && relay.sent >= MIN_RELAY ? verdict(true, r.rtt, r.loss) : null;
+  // 直连连上了就等直连测满再下结论（转发先测满也不抢先）
+  const best = state.connected && !dv ? null : bestPath(dv, rv);
+  return { d, r, dv, rv, best };
 }
 
 const rttText = (rtt: RttSummary | null, loss: number, sent: number) =>
@@ -434,7 +451,11 @@ function brokerText(): string {
 
 function render(): void {
   const { d, r, dv, rv, best } = summary();
-  const waiting = !state.peerSeen ? '等对方加入…' : !state.connected ? '正在连接…' : '正在测…';
+  const waiting = !state.peerSeen
+    ? '等对方加入…'
+    : !state.connected
+      ? '正在连接…'
+      : `正在测…（还要约 ${Math.max(1, Math.ceil(((MIN_DIRECT - direct.sent) * PING_MS) / 1000))} 秒）`;
   verdictEl.className = `nt-card nt-verdict ${best?.v ?? ''}`;
   if (!best) verdictEl.innerHTML = `<h2>${waiting}</h2>`;
   else if (best.path === 'relay') {
@@ -459,7 +480,7 @@ function render(): void {
     [
       '直连',
       state.path
-        ? `${PATH_TEXT[state.path]}（本机 ${state.localType}，对方 ${state.remoteType}）`
+        ? `${PATH_TEXT[state.path]}${state.family ? `，${state.family}` : ''}（本机 ${state.localType}，对方 ${state.remoteType}）`
         : dv === 'fail'
           ? `打不通（试过的路：${state.pairs || '没有'}）`
           : state.pairs
@@ -509,7 +530,7 @@ function resultText(): string {
     `本机公网地址：${state.stunOk.size ? [...state.stunOk].join('、') : '没拿到'}`,
     `本机地址：${state.mine ? `${describeCandidates(state.mine)}；${NAT_TEXT[natKind(state.mine)]}` : '—'}`,
     `对方地址：${state.theirs ? `${describeCandidates(state.theirs)}；${NAT_TEXT[natKind(state.theirs)]}` : '没收到'}`,
-    `直连：${state.path ? `${PATH_TEXT[state.path]}（本机 ${state.localType}，对方 ${state.remoteType}）` : `没连上（试过的路：${state.pairs || '没有'}）`}${dv ? ` → ${VERDICT_TEXT[dv].title}` : ''}`,
+    `直连：${state.path ? `${PATH_TEXT[state.path]}${state.family ? `，${state.family}` : ''}（本机 ${state.localType}，对方 ${state.remoteType}）` : `没连上（试过的路：${state.pairs || '没有'}）`}${dv ? ` → ${VERDICT_TEXT[dv].title}` : ''}`,
     `直连延迟：${rttText(d.rtt, d.loss, direct.sent)}`,
     `转发延迟：${rttText(r.rtt, r.loss, relay.sent)}${rv ? ` → ${VERDICT_TEXT[rv].title}` : ''}`,
     `浏览器：${browser} / ${os}`,

@@ -44,6 +44,8 @@ export interface GameViewOptions {
   /** 双人分屏（左近端、右远端） */
   split?: boolean;
   onEvent?: (e: MatchEvent) => void;
+  /** 精彩的分打完放回放（默认放）；远程对打不放：回放时仿真停着，两台电脑就对不上了 */
+  replays?: boolean;
 }
 
 /**
@@ -429,6 +431,7 @@ export class GameView {
         this.lastPointHit = hit;
         // 精彩的分：欢呼一会儿后回放
         if (
+          this.opts.replays !== false &&
           isHighlight({
             rallyHits: e.rallyHits,
             reason: e.reason,
